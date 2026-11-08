@@ -1,5 +1,6 @@
 * text=auto eol=lf
-*.bat text eol=crlf
+# .bat 文件必须保持 CRLF 原样（LF 会导致 cmd 解析错乱、双击没反应）
+*.bat -text
 *.png binary
 *.jpg binary
 *.woff2 binary

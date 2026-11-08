@@ -185,6 +185,14 @@ for f in static/js/*.js; do node --check "$f"; done
 
 ---
 
+## ❓ 常见问题
+
+- **双击 `启动学习台.bat` 没反应 / 窗口一闪而过**：90% 是文件换行被变成了 LF。Windows 批处理必须用 CRLF 换行，从网页复制、部分解压工具或旧版 ZIP 都可能弄坏它。解决：重新下载最新 ZIP（或 `git clone`，仓库用 `.gitattributes` 保持 CRLF）；也可以在该目录打开 PowerShell 运行 `cmd /c 启动学习台.bat`，就能看到真实报错。
+- **窗口里中文乱码**：批处理已内置 `chcp 65001`；如果仍乱码，直接在该目录运行 `python server.py`，用浏览器访问即可，不影响功能。
+- **双击后浏览器没自动打开**：手动访问 `http://127.0.0.1:8765/`；如果 8765 被占用，看窗口里提示的实际端口。
+- **提示没有找到教材 PDF**：正常，本项目不附带教材，把 PDF 命名为 `book.pdf` 放根目录，或复制 `config.example.json` 为 `config.json` 填路径。
+- **构建时提示缺 pymupdf**：运行 `python -m pip install -r requirements.txt`。
+
 ## 🤝 贡献
 
 欢迎 Issue / PR。请勿提交教材 PDF、`data/`、API Key 或个人学习数据（见 `.gitignore`）。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
