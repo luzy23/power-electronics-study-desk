@@ -1759,7 +1759,7 @@
   }
 
   /* ---------------------------------------------------------- page views */
-  const VIEW_TITLES = { plan: '6 周学习计划', glossary: '术语本', mistakes: '错题本', quiz: '周测', archive: '学习存档', settings: '设置' };
+  const VIEW_TITLES = { plan: '学习计划', glossary: '术语本', mistakes: '错题本', quiz: '周测', archive: '学习存档', settings: '设置' };
 
   function showView(name) {
     const study = $('#studyView'), page = $('#pageView');
