@@ -104,7 +104,7 @@ python server.py
 - 想回到作者推荐的节奏，点「载入内置 6 周计划」；
 - 所有勾选、自定义任务、日期设置都会保存到本机，并包含在备份/导出里。
 
-![自定义学习计划](docs/screenshots/custom-plan-auto.png)
+![内置 6 周计划（可一键切回）](docs/screenshots/custom-plan-preset.png)
 
 ---
 
