@@ -83,7 +83,8 @@ python server.py
 ```
 
 打开 `http://127.0.0.1:8765/`，右上角「设置」里填写 API（Key 只存在本机浏览器，通过本地服务转发）：
-建议使用deepseek-flash官方API，进入https://platform.deepseek.com后注册，充值后获取API Key（可先充值5元左右尝试效果），本学习台高强度学习一天花费不足1元。
+
+建议使用deepseek-flash官方API，进入https://platform.deepseek.com，注册，充值后获取API Key（可先充值5元左右尝试效果），本学习台高强度学习一天花费不足1元。
 
 
 没配 Key 可以勾选「演示模式」先预览界面。
