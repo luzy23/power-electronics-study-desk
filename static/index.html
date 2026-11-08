@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>电力电子学习台 · Fundamentals of Power Electronics</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">
+    <span class="bolt">⚡</span>
+    <div class="brand-text">
+      <strong>电力电子学习台</strong>
+      <span class="brand-sub">Fundamentals of Power Electronics · 3rd ed.</span>
+    </div>
+  </div>
+  <nav class="topnav">
+    <button class="topnav-btn toggle-btn on" id="btnToggleSide" title="显示 / 隐藏左侧目录">▤ 目录</button>
+    <button class="topnav-btn toggle-btn on" id="btnToggleWork" title="显示 / 隐藏右侧 AI 面板">▥ AI</button>
+    <span class="topnav-sep"></span>
+    <button class="topnav-btn" data-view="plan">6 周计划</button>
+    <button class="topnav-btn" data-view="archive">存档</button>
+    <button class="topnav-btn" data-view="glossary">术语本</button>
+    <button class="topnav-btn" data-view="mistakes">错题本</button>
+    <button class="topnav-btn" data-view="quiz">周测</button>
+    <button class="topnav-btn" id="btnSettings">设置</button>
+    <span class="topnav-sep"></span>
+    <button class="topnav-btn" id="btnToggleTop" title="隐藏顶部工具栏（隐藏后右上角有恢复按钮）">▭ 顶栏</button>
+    <button class="topnav-btn" id="btnFullscreen" title="全屏 / 退出全屏（Esc 退出）">⛶ 全屏</button>
+    <span id="apiStatus" class="pill pill-warn">未配置 API</span>
+  </nav>
+</header>
+
+<button id="btnShowTopbar" class="float-top hidden" title="显示顶部工具栏">▾ 显示顶栏</button>
+
+<div id="layout">
+  <aside id="sidebar">
+    <div id="progressBox" class="progress-box">
+      <div class="pb-row"><span>学习进度</span><b id="pbText">0 / 9 章</b></div>
+      <div class="pb-bar"><i id="pbFill"></i></div>
+      <div class="pb-sub" id="pbSub">目标：Part I + Part II（第 1–9 章）· 截止 12 月 1 日</div>
+    </div>
+    <div class="side-title">教材目录</div>
+    <nav id="toc"></nav>
+    <div class="side-foot">
+      <button class="link" data-view="plan">📅 6 周计划</button>
+      <button class="link" data-view="glossary">📒 术语本 <b id="glossCount">0</b></button>
+      <button class="link" data-view="mistakes">❌ 错题本 <b id="missCount">0</b></button>
+    </div>
+  </aside>
+
+  <div id="splitSide" class="splitter" title="拖动调整目录宽度，双击复位"></div>
+
+  <main id="main">
+    <!-- 学习视图 -->
+    <div id="studyView" class="view">
+      <section id="reader">
+        <div class="reader-head">
+          <div class="rh-left">
+            <div id="rhChapter" class="rh-chapter">选择章节</div>
+            <select id="sectionSelect" class="section-select"></select>
+          </div>
+          <div class="rh-right">
+            <button class="icon-btn" id="btnPrevPage" title="上一页 (←)">◀</button>
+            <input id="pageInput" class="page-input" value="1" inputmode="numeric">
+            <button class="icon-btn" id="btnNextPage" title="下一页 (→)">▶</button>
+            <select id="dpiSelect" class="dpi-select">
+              <option value="100">100%</option>
+              <option value="120" selected>120%</option>
+              <option value="160">160%</option>
+              <option value="200">200%</option>
+            </select>
+            <select id="spreadSelect" class="dpi-select" title="单页 / 双页">
+              <option value="single">单页</option>
+              <option value="double">双页</option>
+            </select>
+          </div>
+        </div>
+        <div class="reader-tabs">
+          <button class="rt-btn active" data-rt="page">教材页面</button>
+          <button class="rt-btn" data-rt="text">提取原文</button>
+          <span class="rt-hint" id="rtHint">选中文字可 🖍高亮 / ⚡查词 / 四栏精读</span>
+          <select id="imgScaleSelect" class="dpi-select" title="图表/公式显示大小">
+            <option value="0.5" selected>图 50%</option>
+            <option value="0.75">图 75%</option>
+            <option value="1">图 100%</option>
+          </select>
+        </div>
+        <div id="pagePane" class="reader-body">
+          <div class="page-wrap" id="pageWrap"></div>
+        </div>
+        <div id="textPane" class="reader-body hidden">
+          <div class="text-loading">加载原文…</div>
+        </div>
+      </section>
+
+      <div id="splitReader" class="splitter" title="拖动调整教材与 AI 面板宽度，双击复位"></div>
+
+      <section id="workbench">
+        <div class="work-tabs" id="workTabs">
+          <button class="wt-btn active" data-wt="pre">① 预习</button>
+          <button class="wt-btn" data-wt="close">② 精读</button>
+          <button class="wt-btn" data-wt="practice">③ 练习</button>
+          <button class="wt-btn" data-wt="feynman">④ 费曼</button>
+          <button class="wt-btn" data-wt="pack">⑤ 学习包</button>
+        </div>
+        <div id="workBody" class="work-body"></div>
+      </section>
+    </div>
+
+    <!-- 独立页面视图 -->
+    <div id="pageView" class="view hidden">
+      <div class="page-head">
+        <button class="back-btn" id="btnBack">← 回到学习台</button>
+        <h1 id="pageTitle">计划</h1>
+      </div>
+      <div id="pageBody" class="page-body"></div>
+    </div>
+  </main>
+</div>
+
+<!-- 选中文字浮动工具条 -->
+<div id="selBar" class="sel-bar hidden">
+  <span class="sel-preview" id="selPreview"></span>
+  <button data-sel="hl">🖍 高亮</button>
+  <button data-sel="close">四栏精读</button>
+  <button data-sel="formula">公式拆解</button>
+  <button data-sel="cards">术语卡</button>
+  <button data-sel="ask">追问</button>
+</div>
+
+<div id="hlTip" class="hl-tip hidden"></div>
+
+<!-- 设置弹窗 -->
+<div id="modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2>设置</h2>
+      <button class="icon-btn" id="btnCloseModal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>API 服务商</label>
+        <select id="cfgProvider">
+          <option value="deepseek">DeepSeek（推荐）</option>
+          <option value="openai">OpenAI</option>
+          <option value="custom">自定义 / 本地（OpenAI 兼容）</option>
+        </select>
+        <div class="hint" id="providerHint">DeepSeek 控制台申请 Key：platform.deepseek.com</div>
+      </div>
+      <div class="field">
+        <label>Base URL</label>
+        <input id="cfgBase" placeholder="https://api.deepseek.com/v1">
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <input id="cfgKey" type="password" placeholder="sk-...">
+        <div class="hint">只保存在本机浏览器 localStorage，通过本地服务器转发，不写入任何文件。</div>
+      </div>
+      <div class="field">
+        <label>模型</label>
+        <div class="row">
+          <input id="cfgModel" class="grow" placeholder="deepseek-chat" list="modelList">
+          <button class="btn" id="btnFetchModels" type="button">获取可用模型</button>
+        </div>
+        <datalist id="modelList"></datalist>
+        <div id="modelChips" class="chips" style="margin-top:6px"></div>
+        <div class="hint" id="modelHint">不同接口支持的模型名不同（如 deepseek-chat / deepseek-flash / deepseek-v4-pro）。点「获取可用模型」直接从接口拉取，避免写错。</div>
+      </div>
+      <div class="field">
+        <label>温度（0.1 严谨 ↔ 0.9 发散）</label>
+        <input id="cfgTemp" type="number" step="0.1" min="0" max="1.5" value="0.4">
+      </div>
+      <label class="check"><input type="checkbox" id="cfgDemo"> 演示模式（无需 Key，使用内置示例内容，用来预览界面）</label>
+      <div class="modal-actions">
+        <button class="btn" id="btnTestApi">测试连接</button>
+        <button class="btn primary" id="btnSaveCfg">保存</button>
+      </div>
+      <div id="testResult" class="test-result"></div>
+      <hr>
+      <div class="field">
+        <label>数据备份</label>
+        <div class="modal-actions">
+          <button class="btn" id="btnExportAll">导出全部数据</button>
+          <button class="btn" id="btnImportAll">导入备份</button>
+          <input type="file" id="importFile" accept=".json" hidden>
+        </div>
+        <label class="check" style="margin-top:8px"><input type="checkbox" id="cfgAutoBackup" checked> 自动备份到本地文件夹（每 90 秒最多一次，保留最近 30 份）</label>
+        <div class="modal-actions" style="margin-top:6px">
+          <button class="btn small-btn" id="btnBackupNow">立即备份</button>
+          <span class="tiny muted" id="backupInfo">还没有自动备份</span>
+        </div>
+        <div class="hint">备份文件写在 `backups/` 目录；包含：进度、术语本、错题本、笔记、计划勾选、高亮、学习存档、自定义提示词（不含 API Key）。</div>
+      </div>
+      <hr>
+      <div class="field">
+        <label>自定义提示词</label>
+        <div class="modal-actions">
+          <button class="btn" id="btnPromptEditor">编辑自定义提示词</button>
+        </div>
+        <div class="hint">预设提示词保持不变；你改过的任务会覆盖内置版本，可随时恢复默认。修改会随备份一起导出。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 自定义提示词弹窗 -->
+<div id="promptModal" class="modal hidden">
+  <div class="modal-box" style="max-width:900px">
+    <div class="modal-head">
+      <h2>自定义提示词</h2>
+      <button class="icon-btn" id="btnClosePrompt">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="promptTaskSel" style="max-width:340px"></select>
+        <span class="tiny muted" id="promptTaskMeta"></span>
+      </div>
+      <div class="modal-actions" style="justify-content:flex-start;margin:8px 0 0">
+        <button class="btn small-btn ghost" id="btnPromptResetOne">恢复此任务默认</button>
+        <button class="btn small-btn ghost" id="btnPromptResetAll">全部恢复默认</button>
+      </div>
+      <textarea id="promptText" class="textarea" style="min-height:320px;margin-top:8px;font-family:ui-monospace,Consolas,monospace;font-size:12.5px"></textarea>
+      <div class="hint" id="promptHint">提示词中的 {{占位符}} 会被自动替换；点「保存」后立即生效（已生成的内容不受影响）。</div>
+      <div class="modal-actions">
+        <button class="btn primary" id="btnPromptSave">保存</button>
+        <button class="btn" id="btnClosePrompt2">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="termPop" class="term-pop hidden">
+  <div class="tp-head">
+    <b id="tpTerm">术语</b>
+    <button class="tp-x" data-act="term-close" title="关闭 (Esc)">✕</button>
+  </div>
+  <div class="tp-body" id="tpBody"></div>
+  <div class="tp-foot">
+    <button class="btn tiny-btn" data-act="term-save">＋ 存入术语本</button>
+    <button class="btn tiny-btn ghost" data-act="term-full">完整术语卡</button>
+  </div>
+</div>
+
+<div id="hlPop" class="hl-pop hidden">
+  <div class="hp-head"><b>荧光笔</b><button class="tp-x" data-act="hl-close" title="关闭">✕</button></div>
+  <div class="hp-colors">
+    <button class="hp-color c-yellow on" data-act="hl-color" data-v="yellow" title="黄色"></button>
+    <button class="hp-color c-green" data-act="hl-color" data-v="green" title="绿色"></button>
+    <button class="hp-color c-pink" data-act="hl-color" data-v="pink" title="粉色"></button>
+    <span class="tiny muted">选颜色（只影响本次）</span>
+  </div>
+  <textarea id="hlNote" class="hp-note" placeholder="可选：写一句注释帮助记忆；也可以点下面让 AI 翻译/总结后自动填入"></textarea>
+  <div class="hp-ai">
+    <button class="btn tiny-btn" data-act="hl-ai" data-v="translate">AI 翻译这段</button>
+    <button class="btn tiny-btn" data-act="hl-ai" data-v="summary">AI 总结这段</button>
+  </div>
+  <div class="hp-foot">
+    <button class="btn primary small-btn" data-act="hl-save">保存高亮</button>
+    <span class="tiny muted">保存后点荧光标记可取消</span>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/katex/katex.min.js"></script>
+<script src="/vendor/katex/contrib/auto-render.min.js"></script>
+<script src="/js/core.js"></script>
+<script src="/js/prompts.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/views.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
