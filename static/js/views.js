@@ -273,6 +273,7 @@
       CATS.map(c => '<button class="btn small-btn ' + (filter === c[0] ? 'primary' : 'ghost') +
         '" data-act="glossary-filter" data-cat="' + c[0] + '">' + c[1] + ' <b>' + (counts[c[0]] || 0) + '</b></button>').join('') +
       '</div><div class="toolbar">' +
+      '<button class="btn primary" data-act="review-open">🧠 开始复习</button>' +
       '<input class="input" id="gSearch" placeholder="搜索单词 / 解释" style="max-width:220px" value="' + escAttr(S.wbQuery || '') + '">' +
       '<button class="btn" data-act="glossary-search">搜索</button>' +
       '<button class="btn" data-act="glossary-reclass">重新自动分类</button>' +
@@ -305,6 +306,123 @@
         '<td><button class="btn tiny-btn ghost" data-act="glossary-del" data-id="' + escAttr(g.id) + '">删</button></td></tr>';
     });
     h += '</tbody></table>';
+    return h;
+  }
+
+  /* ==========================================================
+   * 单词复习：遗忘曲线 + 四选一
+   * ========================================================== */
+  function rvToday() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function rvChapter(g) {
+    const m = /第\s*(\d+)\s*章/.exec(g.src || '');
+    return m ? ('第' + m[1] + '章') : (g.src || '未标注');
+  }
+  function rvCat(g) { return ['term', 'word', 'phrase', 'abbr'].indexOf(g.cat) >= 0 ? g.cat : 'term'; }
+  function rvNote(g) { return String(g.note || '').replace(/\s+/g, ' ').trim(); }
+  const RV_CATS = [['term', '专业术语'], ['word', '普通词'], ['phrase', '短语/搭配'], ['abbr', '缩写/符号']];
+  const RV_CAT_NAMES = { term: '专业术语', word: '普通词', phrase: '短语/搭配', abbr: '缩写/符号' };
+
+  function review() {
+    const S = global.APP.state;
+    const R = S.rev || { phase: 'setup', cfg: { cat: 'all', chapter: 'all', mode: 'due', limit: 20 }, queue: [] };
+    if (R.phase === 'quiz' && R.queue && R.queue[R.idx]) return rvQuiz(R);
+    if (R.phase === 'done') return rvDone(R);
+    return rvSetup(R);
+  }
+
+  function rvSetup(R) {
+    const S = global.APP.state;
+    const cfg = Object.assign({ cat: 'all', chapter: 'all', mode: 'due', limit: 20 }, R.cfg || {});
+    const all = (S.glossary || []).filter(g => rvNote(g));
+    const today = rvToday();
+    const due = all.filter(g => !g.srs || String(g.srs.due || '') <= today).length;
+    const weak = all.filter(g => !g.srs || g.srs.reps === 0 || g.srs.lapses > 0).length;
+    const chapters = [...new Set(all.map(rvChapter))].sort((a, b) => {
+      const na = parseInt((a.match(/\d+/) || [999])[0], 10);
+      const nb = parseInt((b.match(/\d+/) || [999])[0], 10);
+      return na - nb;
+    });
+    const catOpts = '<option value="all">全部类别</option>' + RV_CATS.map(c =>
+      '<option value="' + c[0] + '"' + (cfg.cat === c[0] ? ' selected' : '') + '>' + c[1] + '</option>').join('');
+    const chOpts = '<option value="all">全部章节</option>' + chapters.map(c =>
+      '<option value="' + global.U.esc(c) + '"' + (cfg.chapter === c ? ' selected' : '') + '>' + global.U.esc(c) + '</option>').join('');
+    const modes = [['due', '今日到期（推荐）'], ['all', '全部单词'], ['weak', '薄弱 / 新词']];
+    const limits = [10, 20, 50, 100];
+
+    let h = '<div class="card"><div class="card-title">单词复习 <span class="tag">遗忘曲线 · 四选一</span></div>' +
+      '<div class="row" style="flex-wrap:wrap;gap:12px;align-items:flex-end">' +
+      '<label class="tiny muted">类别<br><select class="input" id="revCat">' + catOpts + '</select></label>' +
+      '<label class="tiny muted">章节<br><select class="input" id="revChapter">' + chOpts + '</select></label>' +
+      '<label class="tiny muted">范围<br><select class="input" id="revMode">' +
+        modes.map(m => '<option value="' + m[0] + '"' + (cfg.mode === m[0] ? ' selected' : '') + '>' + m[1] + '</option>').join('') +
+      '</select></label>' +
+      '<label class="tiny muted">本次数量<br><select class="input" id="revLimit">' +
+        limits.map(n => '<option value="' + n + '"' + (Number(cfg.limit) === n ? ' selected' : '') + '>' + n + ' 张</option>').join('') +
+      '</select></label>' +
+      '<button class="btn primary" data-act="review-start">开始复习</button>' +
+      '<button class="btn" data-view="glossary">返回单词本</button></div>' +
+      '<div class="tiny muted" style="margin-top:10px">今日到期 <b>' + due + '</b> 条 · 全部 <b>' + all.length +
+        '</b> 条 · 薄弱/新词 <b>' + weak + '</b> 条</div>' +
+      (all.length < 4 ? '<div class="hint" style="color:#b45309">至少需要 4 条带释义的单词才能生成选择题。</div>' : '') +
+      '<div class="hint">答对：间隔 1 → 3 → 7 → 14… 天，难度系数逐渐提高；答错：1 天后重来。记录会存在单词本里，跟着备份走。</div></div>';
+    return h;
+  }
+
+  function rvQuiz(R) {
+    const q = R.queue[R.idx];
+    const sel = R.sel;
+    const total = R.queue.length;
+    const isLast = R.idx + 1 >= total;
+    let h = '<div class="rev-wrap"><div class="rev-progress">第 ' + (R.idx + 1) + ' / ' + total + ' 张' +
+      ' · 正确 ' + R.correct + ' · 错误 ' + R.wrong.length + '</div>' +
+      '<div class="card rev-card"><div class="rev-term">' + global.U.esc(q.term) + '</div>' +
+      '<div class="rev-meta">' + RV_CAT_NAMES[q.cat] + (q.src ? ' · ' + global.U.esc(q.src) : '') + '</div>' +
+      '<div class="rev-opts">';
+    q.options.forEach((opt, i) => {
+      let cls = 'rev-opt';
+      if (R.answered) {
+        if (i === q.answer) cls += ' correct';
+        else if (i === sel) cls += ' wrong';
+      }
+      h += '<button type="button" class="' + cls + '" data-act="review-answer" data-i="' + i + '"' +
+        (R.answered ? ' disabled' : '') + '><b>' + (i + 1) + '.</b> ' + global.U.esc(opt) + '</button>';
+    });
+    h += '</div>';
+    if (!R.answered) {
+      h += '<div class="toolbar" style="margin-top:14px"><button class="btn" data-act="review-ai-defs">AI 换干扰项</button>' +
+        '<span class="tiny muted">快捷键 1–4 选择，Enter 下一张</span></div>';
+    } else {
+      const ok = sel === q.answer;
+      h += '<div class="rev-feedback ' + (ok ? 'ok' : 'bad') + '">' +
+        (ok ? '✅ 答对了' : '❌ 答错了，答案已标绿') + '</div>' +
+        '<div class="rev-note"><b>正确释义：</b>' + global.U.esc(q.note) + '</div>' +
+        '<div class="toolbar" style="margin-top:8px"><button class="btn" data-act="review-ai-explain">AI 讲解</button>' +
+        '<button class="btn primary" data-act="review-next">' + (isLast ? '看结果' : '下一张') + '</button></div>' +
+        '<div id="revAi" class="rev-ai"></div>';
+    }
+    h += '</div></div>';
+    return h;
+  }
+
+  function rvDone(R) {
+    const total = R.queue.length;
+    const acc = total ? Math.round((R.correct / total) * 100) : 0;
+    let h = '<div class="card"><div class="card-title">复习完成 🎉</div>' +
+      '<div class="rev-summary"><b>' + acc + '%</b> 正确率 · 共 ' + total + ' 张 · 正确 ' + R.correct +
+      ' · 错误 ' + R.wrong.length + '</div>';
+    if (R.wrong.length) {
+      h += '<div class="tiny muted" style="margin:14px 0 6px">这次没答对的（明天会优先出现）：</div>';
+      R.wrong.forEach(w => {
+        h += '<div class="rev-wrong"><b>' + global.U.esc(w.term) + '</b>' +
+          '<span class="tiny muted">' + global.U.esc(w.src || '') + '</span>' +
+          '<div class="tiny">正确释义：' + global.U.esc(w.correct) + '</div></div>';
+      });
+    }
+    h += '<div class="toolbar" style="margin-top:16px"><button class="btn primary" data-act="review-restart">再复习一轮</button>' +
+      '<button class="btn" data-view="glossary">返回单词本</button></div></div>';
     return h;
   }
 
@@ -399,5 +517,5 @@
   }
 
   global.VIEWS_PLAN_PRESET = PLAN;
-  global.VIEWS = { plan, glossary, mistakes, quiz, archive, PLAN };
+  global.VIEWS = { plan, glossary, review, mistakes, quiz, archive, PLAN };
 })(window);

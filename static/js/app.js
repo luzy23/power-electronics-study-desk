@@ -40,6 +40,7 @@
     sectionData: {},
     progress: store.get('progress', {}),
     glossary: store.get('glossary', []),
+    rev: null,
     mistakes: store.get('mistakes', []),
     notes: store.get('notes', {}),
     archive: store.get('archive', {}),
@@ -181,9 +182,177 @@
       return { item: cur, created: false };
     }
     const item = { id: uid(), en, zh, note, cat, src,
+      srs: { due: wbToday(), interval: 0, ease: 2.5, reps: 0, lapses: 0 },
       source: entry.source || 'lookup', createdAt: nowStr() };
     S.glossary.push(item);
     return { item, created: true };
+  }
+
+
+  /* ---------------------------------------------------------- 单词复习（遗忘曲线 + 四选一） */
+  function wbYmd(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function wbToday() { return wbYmd(new Date()); }
+  function wbAddDays(ymd, n) {
+    const d = new Date(String(ymd) + 'T00:00:00');
+    d.setDate(d.getDate() + n);
+    return wbYmd(d);
+  }
+  function wbShuffle(a) {
+    a = a.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+  function wbEnsureSrs(g) {
+    if (!g.srs) g.srs = { due: wbToday(), interval: 0, ease: 2.5, reps: 0, lapses: 0 };
+    else {
+      if (!g.srs.due) g.srs.due = wbToday();
+      if (typeof g.srs.interval !== 'number') g.srs.interval = 0;
+      if (!g.srs.ease) g.srs.ease = 2.5;
+      if (!g.srs.reps) g.srs.reps = 0;
+      if (!g.srs.lapses) g.srs.lapses = 0;
+    }
+  }
+  function wbEntryCat(g) { return WB_CAT_NAMES[g.cat] ? g.cat : 'term'; }
+  function wbEntryChapter(g) {
+    const m = /第\s*(\d+)\s*章/.exec(g.src || '');
+    return m ? ('第' + m[1] + '章') : (g.src || '未标注');
+  }
+  function wbNoteShort(g) {
+    return String(g.note || '').replace(/\s+/g, ' ').trim().slice(0, 110);
+  }
+  function wbOptionText(g) {
+    return wbNoteShort(g).replace(/^(译名|释义)[：:]\s*/, '')
+      .replace(/[（(]普通词[）)]/g, '').replace(/\s{2,}/g, ' ').trim();
+  }
+  function revState() {
+    if (!S.rev) {
+      S.rev = { phase: 'setup', cfg: { cat: 'all', chapter: 'all', mode: 'due', limit: 20 },
+        queue: [], idx: 0, answered: false, sel: -1, correct: 0, wrong: [] };
+    }
+    if (!S.rev.cfg) S.rev.cfg = { cat: 'all', chapter: 'all', mode: 'due', limit: 20 };
+    return S.rev;
+  }
+  function revFiltered(cfg) {
+    const today = wbToday();
+    return (S.glossary || []).filter(g => {
+      if (!g.en || !wbNoteShort(g)) return false;
+      if (cfg.cat !== 'all' && wbEntryCat(g) !== cfg.cat) return false;
+      if (cfg.chapter !== 'all' && wbEntryChapter(g) !== cfg.chapter) return false;
+      if (cfg.mode === 'due') {
+        if (!g.srs) return true;
+        return String(g.srs.due || '') <= today;
+      }
+      if (cfg.mode === 'weak') {
+        const s = g.srs;
+        return !s || s.reps === 0 || s.lapses > 0;
+      }
+      return true;
+    });
+  }
+  function wbSchedule(g, ok) {
+    wbEnsureSrs(g);
+    const s = g.srs;
+    if (ok) {
+      s.reps = (s.reps || 0) + 1;
+      s.interval = s.reps <= 1 ? 1 : (s.reps === 2 ? 3 : Math.max(3, Math.round((s.interval || 1) * (s.ease || 2.5))));
+      s.ease = Math.min(2.9, (s.ease || 2.5) + 0.1);
+    } else {
+      s.lapses = (s.lapses || 0) + 1;
+      s.reps = 0;
+      s.interval = 1;
+      s.ease = Math.max(1.3, (s.ease || 2.5) - 0.2);
+    }
+    s.due = wbAddDays(wbToday(), s.interval || 1);
+  }
+  function revBuildQueue() {
+    const R = revState();
+    const cfg = R.cfg || { cat: 'all', chapter: 'all', mode: 'due', limit: 20 };
+    const cands = revFiltered(cfg);
+    if (!cands.length) { toast('这个筛选下没有可复习的单词'); return; }
+    const all = (S.glossary || []).filter(g => wbNoteShort(g));
+    const limit = Math.max(1, parseInt(cfg.limit, 10) || 20);
+    const picked = wbShuffle(cands).slice(0, limit);
+    const qs = [];
+    picked.forEach(g => {
+      const correct = wbOptionText(g);
+      let decoys = wbShuffle(all.filter(x => x.id !== g.id && wbEntryCat(x) === wbEntryCat(g) &&
+        wbNoteShort(x) && wbOptionText(x) !== correct)).map(wbOptionText);
+      if (decoys.length < 3) {
+        decoys = decoys.concat(wbShuffle(all.filter(x => x.id !== g.id && wbNoteShort(x) && wbNoteShort(x) !== correct))
+          .map(wbOptionText));
+      }
+      decoys = [...new Set(decoys)].slice(0, 3);
+      if (decoys.length < 3) return;
+      const options = wbShuffle([correct].concat(decoys));
+      qs.push({ entryId: g.id, term: g.en, note: correct, cat: wbEntryCat(g), src: g.src || '',
+        options, answer: options.indexOf(correct) });
+    });
+    if (!qs.length) { toast('至少需要 4 条带释义的单词才能出选择题'); return; }
+    R.queue = qs;
+    R.idx = 0; R.answered = false; R.sel = -1; R.correct = 0; R.wrong = []; R.phase = 'quiz';
+    showView('review');
+  }
+  function revAnswer(i) {
+    const R = revState();
+    const q = R.queue[R.idx];
+    if (!q || R.answered || i < 0 || i >= q.options.length) return;
+    R.sel = i; R.answered = true;
+    const ok = i === q.answer;
+    const g = (S.glossary || []).find(x => x.id === q.entryId);
+    if (g) { wbSchedule(g, ok); saveGlossary(); updateCounts(); }
+    if (ok) R.correct++;
+    else R.wrong.push({ term: q.term, correct: q.note, chosen: q.options[i], src: q.src });
+    showView('review');
+  }
+  function revNext() {
+    const R = revState();
+    if (!R.answered) return;
+    R.idx++;
+    if (R.idx >= R.queue.length) R.phase = 'done';
+    else { R.answered = false; R.sel = -1; }
+    showView('review');
+  }
+  async function revAIExplain() {
+    if (API.isDemo()) return toast('演示模式不调用 AI');
+    const R = revState(), q = R.queue[R.idx];
+    if (!q || !R.answered) return;
+    const box = $('#revAi');
+    if (!box) return;
+    box.textContent = '生成中…';
+    try {
+      const msgs = await PROMPTS.build('reviewExplain', {
+        term: q.term, correct: q.note, chosen: q.options[R.sel] || '（未选择）', source: q.src || ''
+      });
+      let text = '';
+      await API.stream(msgs, { maxTokens: 320, temperature: 0.3, onDelta: d => { text += d; box.textContent = text; } });
+      if (text.trim()) U.renderMarkdown(box, text); else box.textContent = '（没有返回内容）';
+    } catch (e) { box.textContent = '⚠️ ' + (e && e.message ? e.message : e); }
+  }
+  async function revAIDefs() {
+    if (API.isDemo()) return toast('演示模式不调用 AI');
+    const R = revState(), q = R.queue[R.idx];
+    if (!q) return;
+    if (R.answered) return toast('已经作答，不能更换选项');
+    toast('AI 正在生成干扰项…');
+    try {
+      const msgs = await PROMPTS.build('reviewDistractors', { term: q.term, correct: q.note, source: q.src || '' });
+      let text = '';
+      await API.stream(msgs, { maxTokens: 300, temperature: 0.8, onDelta: d => { text += d; } });
+      const lines = text.split(/\n+/).map(s => s.replace(/^[-*\d.、\s]+/, '').trim())
+        .filter(s => s && s !== q.note && s.length >= 2).slice(0, 3);
+      if (lines.length < 3) { toast('AI 返回的干扰项不足，保留原选项'); return; }
+      const options = wbShuffle([q.note].concat(lines));
+      q.options = options;
+      q.answer = options.indexOf(q.note);
+      R.sel = -1; R.answered = false;
+      showView('review');
+      toast('已换成 AI 干扰项');
+    } catch (e) { toast('AI 生成失败：' + (e && e.message ? e.message : e)); }
   }
 
   /** 查词结果自动同步到单词本（已有则补全字段，不重复） */
@@ -222,7 +391,9 @@
         if (!cur.src && g.src) cur.src = g.src;
         return;
       }
-      out.push(Object.assign({}, g, { en, cat, id: g.id || uid(), source: g.source || 'manual' }));
+      const item = Object.assign({}, g, { en, cat, id: g.id || uid(), source: g.source || 'manual' });
+      if (!item.srs) { item.srs = { due: wbToday(), interval: 0, ease: 2.5, reps: 0, lapses: 0 }; changed = true; }
+      out.push(item);
     });
     S.glossary = out;
     if (changed) { saveGlossary(); updateCounts(); }
@@ -1937,7 +2108,7 @@
   }
 
   /* ---------------------------------------------------------- page views */
-  const VIEW_TITLES = { plan: '学习计划', glossary: '单词本', mistakes: '错题本', quiz: '周测', archive: '学习存档', settings: '设置' };
+  const VIEW_TITLES = { plan: '学习计划', glossary: '单词本', review: '单词复习', mistakes: '错题本', quiz: '周测', archive: '学习存档', settings: '设置' };
 
   function showView(name) {
     const study = $('#studyView'), page = $('#pageView');
@@ -1991,7 +2162,8 @@
   const PROMPT_LABELS = {
     system: '全局 system 提示（角色 / 风格 / 公式规范）',
     pre: '① 读前预习', preAnswers: '读前问题解答', close: '② 四栏精读', formula: '公式拆解',
-    cards: '术语卡', termQuick: '⚡ 查词速查', hlTranslate: '高亮 · AI 翻译', hlSummary: '高亮 · AI 总结',
+    cards: '术语卡', termQuick: '⚡ 查词速查',
+    reviewExplain: '单词复习 · AI 讲解', reviewDistractors: '单词复习 · AI 干扰项', hlTranslate: '高亮 · AI 翻译', hlSummary: '高亮 · AI 总结',
     ask: '追问', questions: '练习 · 出题', grade: '练习 · 批改',
     feynmanQ: '费曼 · 学生提问', feynmanDiag: '费曼 · 诊断',
     pack: '⑤ 学习包', packNotes: '长文分块笔记（内部用）', mergeNotes: '长文合并（内部用）',
@@ -2747,6 +2919,15 @@
       downloadFile('单词本-' + today() + '.md', mdTxt, 'text/markdown');
     },
 
+    'review-open': () => { S.rev = null; revState(); showView('review'); },
+    'review-back': () => showView('glossary'),
+    'review-start': () => revBuildQueue(),
+    'review-answer': (el) => revAnswer(parseInt(el.dataset.i, 10)),
+    'review-next': () => revNext(),
+    'review-restart': () => { if (S.rev) { S.rev.phase = 'setup'; } showView('review'); },
+    'review-ai-explain': () => revAIExplain(),
+    'review-ai-defs': () => revAIDefs(),
+
     'mistakes-del': (el) => { S.mistakes.splice(Number(el.dataset.i), 1); saveMistakes(); updateCounts(); showView('mistakes'); },
     'mistakes-export': () => {
       const mdTxt = S.mistakes.map(m => '## ' + m.date + ' · ' + m.chapter + '\n\n**题目**\n\n' + m.question + '\n\n**我的解答**\n\n' + m.answer + '\n\n**批改要点**\n\n' + m.feedback + '\n').join('\n---\n\n');
@@ -2983,6 +3164,10 @@
     });
 
     document.addEventListener('change', (e) => {
+      if (e.target.id === 'revCat') { revState().cfg.cat = e.target.value; showView('review'); return; }
+      if (e.target.id === 'revChapter') { revState().cfg.chapter = e.target.value; showView('review'); return; }
+      if (e.target.id === 'revMode') { revState().cfg.mode = e.target.value; showView('review'); return; }
+      if (e.target.id === 'revLimit') { revState().cfg.limit = parseInt(e.target.value, 10) || 20; showView('review'); return; }
       if (e.target.matches('.cat-select[data-id]')) { ACTIONS['glossary-cat'](e.target); return; }
       if (e.target.id === 'gSearch') { S.wbQuery = (e.target.value || '').trim(); showView('glossary'); return; }
       if (e.target.id === 'promptTaskSel') { loadPromptTask(e.target.value); return; }
@@ -3052,6 +3237,12 @@
       }, 800);
     });
 
+    document.addEventListener('keydown', (e) => {
+      if (!S.rev || S.rev.phase !== 'quiz') return;
+      if (e.target && e.target.matches && e.target.matches('input,textarea,select')) return;
+      if (/^[1-4]$/.test(e.key)) { ACTIONS['review-answer']({ dataset: { i: String(Number(e.key) - 1) } }); }
+      else if (e.key === 'Enter') { ACTIONS['review-next'](); }
+    });
     document.addEventListener('fullscreenchange', syncFullscreenBtn);
 
     document.addEventListener('keydown', (e) => {
