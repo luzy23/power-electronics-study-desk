@@ -294,7 +294,7 @@
       return h;
     }
     h += '<table class="gtable"><thead><tr><th style="width:26%">单词 / 术语</th><th style="width:16%">分类</th>' +
-      '<th>解释 / 上下文</th><th style="width:80px">来源</th><th style="width:44px"></th></tr></thead><tbody>';
+      '<th>解释 / 上下文</th><th style="width:80px">来源</th><th style="width:76px"></th></tr></thead><tbody>';
     items.forEach(g => {
       const cat = catOf(g);
       h += '<tr><td class="en">' + global.U.esc(g.en) + '</td>' +
@@ -303,14 +303,15 @@
         '</select></td>' +
         '<td>' + global.U.esc(g.note || '') + '</td>' +
         '<td class="tiny muted">' + global.U.esc(g.src || '') + '</td>' +
-        '<td><button class="btn tiny-btn ghost" data-act="glossary-del" data-id="' + escAttr(g.id) + '">删</button></td></tr>';
+        '<td><button class="btn tiny-btn ghost" data-act="glossary-edit" data-id="' + escAttr(g.id) + '">改</button> ' +
+        '<button class="btn tiny-btn ghost" data-act="glossary-del" data-id="' + escAttr(g.id) + '">删</button></td></tr>';
     });
     h += '</tbody></table>';
     return h;
   }
 
   /* ==========================================================
-   * 单词复习：遗忘曲线 + 三种题型
+   * 单词复习：遗忘曲线 + 三种题型 + 自评
    * ========================================================== */
   function rvToday() {
     const d = new Date();
@@ -329,6 +330,7 @@
   function rvNote(g) { return String(g.note || '').replace(/\s+/g, ' ').trim(); }
   const RV_CATS = [['term', '专业术语'], ['word', '普通词'], ['phrase', '短语/搭配'], ['abbr', '缩写/符号']];
   const RV_CAT_NAMES = { term: '专业术语', word: '普通词', phrase: '短语/搭配', abbr: '缩写/符号' };
+  const RV_RATE_NAMES = { again: '忘记', hard: '模糊', good: '记得' };
 
   function review() {
     const S = global.APP.state;
@@ -358,6 +360,17 @@
     const types = [['en2zh', '英 → 中（选择题）'], ['zh2en', '中 → 英（选择题）'], ['spell', '中 → 英（拼写）']];
     const limits = [10, 20, 50, 100];
 
+    const reviewDays = (global.APP.reviewDays ? global.APP.reviewDays() : []) || [];
+    const daySet = new Set(reviewDays);
+    const streak = global.APP.reviewStreak ? global.APP.reviewStreak() : 0;
+    let checkins = '';
+    for (let i = 6; i >= 0; i--) {
+      const key = rvAddDay(-i);
+      const ok = daySet.has(key);
+      checkins += '<span class="rev-day' + (ok ? ' done' : '') + '"><b>' + key.slice(5) +
+        '</b><span>' + (ok ? '✅' : '·') + '</span></span>';
+    }
+
     let forecast = '';
     for (let i = 0; i < 7; i++) {
       const key = rvAddDay(i);
@@ -385,9 +398,10 @@
       '<button class="btn primary" data-act="review-start">开始复习</button>' +
       '<button class="btn" data-view="glossary">返回单词本</button></div>' +
       '<div class="tiny muted" style="margin-top:10px">今日到期 <b>' + due + '</b> 条 · 全部 <b>' + all.length +
-        '</b> 条 · 薄弱/新词/错词 <b>' + weak + '</b> 条</div>' +
+        '</b> 条 · 薄弱/新词/错词 <b>' + weak + '</b> 条 · 连续复习 <b>' + streak + '</b> 天 · 累计 <b>' + reviewDays.length + '</b> 天</div>' +
+      '<div class="rev-checkin">' + checkins + '</div>' +
       '<div class="rev-forecast"><span class="tiny muted" style="margin-right:8px">未来 7 天：</span>' + forecast + '</div>' +
-      '<div class="hint">选择题会优先用同类别、同章节、长度接近的词做干扰项；拼写题忽略大小写和标点。答对间隔 1 → 3 → 7 → 14… 天，答错 1 天后重来。</div></div>';
+      '<div class="hint">选择题会优先用同类别、同章节、长度接近的词做干扰项；拼写题忽略大小写和标点。答完先自评：忘记 / 模糊 / 记得，再决定下次间隔。</div></div>';
     return h;
   }
 
@@ -423,16 +437,30 @@
     }
     if (!R.answered) {
       h += '<div class="toolbar" style="margin-top:14px"><span class="tiny muted">' +
-        (q.type === 'spell' ? '输入后按 Enter 提交' : '快捷键 1–4 选择，Enter 下一张') + '</span></div>';
+        (q.type === 'spell' ? '输入后按 Enter 提交' : '快捷键 1–4 选择') + '</span></div>';
     } else {
       const ok = !!R.lastOk;
       h += '<div class="rev-feedback ' + (ok ? 'ok' : 'bad') + '">' + (ok ? '✅ 答对了' : '❌ 答错了') + '</div>';
       if (q.type === 'spell') {
         h += '<div class="rev-note"><b>你写的：</b>' + global.U.esc(R.input || '（空）') + '</div>';
+        if (!ok && R.spellDist === 1) {
+          h += '<div class="rev-hint">差一个字母：你写的是「' + global.U.esc(R.input || '') +
+            '」，正确是「' + global.U.esc(q.answerText) + '」</div>';
+        } else if (!ok && R.spellDist === 2) {
+          h += '<div class="rev-hint">很接近，差两个字母；正确是「' + global.U.esc(q.answerText) + '」</div>';
+        }
       }
       h += '<div class="rev-note"><b>正确答案：</b>' + global.U.esc(q.answerText) + '</div>';
+      h += '<div class="rev-rate"><span class="tiny muted">这次记得怎么样？</span>' +
+        '<button class="rev-rate-btn' + (R.rated === 'again' ? ' active' : '') + '" data-act="review-rate" data-level="again">忘记</button>' +
+        '<button class="rev-rate-btn' + (R.rated === 'hard' ? ' active' : '') + '" data-act="review-rate" data-level="hard">模糊</button>' +
+        '<button class="rev-rate-btn' + (R.rated === 'good' ? ' active' : '') + '" data-act="review-rate" data-level="good">记得</button></div>';
+      if (R.rated) {
+        h += '<div class="tiny muted" style="margin-top:6px">已记录：' + RV_RATE_NAMES[R.rated] + '</div>';
+      }
       h += '<div class="toolbar" style="margin-top:10px"><button class="btn primary" data-act="review-next">' +
-        (isLast ? '看结果' : '下一张') + '</button></div>';
+        (isLast ? '看结果' : '下一张') + '</button>' +
+        (!R.rated ? '<span class="tiny muted">不选自评直接下一张，会按答题对错自动记</span>' : '') + '</div>';
     }
     h += '</div></div>';
     return h;
@@ -441,9 +469,10 @@
   function rvDone(R) {
     const total = R.queue.length;
     const acc = total ? Math.round((R.correct / total) * 100) : 0;
+    const streak = global.APP.reviewStreak ? global.APP.reviewStreak() : 0;
     let h = '<div class="card"><div class="card-title">复习完成 🎉</div>' +
       '<div class="rev-summary"><b>' + acc + '%</b> 正确率 · 共 ' + total + ' 张 · 正确 ' + R.correct +
-      ' · 错误 ' + R.wrong.length + '</div>';
+      ' · 错误 ' + R.wrong.length + (streak ? ' · 连续复习 ' + streak + ' 天' : '') + '</div>';
     if (R.wrong.length) {
       h += '<div class="tiny muted" style="margin:14px 0 6px">这次没答对的（会优先进入下次复习）：</div>';
       R.wrong.forEach(w => {

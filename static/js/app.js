@@ -229,10 +229,46 @@
     return wbNoteShort(g).replace(/^(译名|释义)[：:]\s*/, '')
       .replace(/[（(]普通词[）)]/g, '').replace(/\s{2,}/g, ' ').trim();
   }
+  function wbReviewDaysGet() {
+    const d = store.get('reviewDays', []);
+    return Array.isArray(d) ? d : [];
+  }
+  function wbMarkReviewDay() {
+    const d = wbReviewDaysGet();
+    const t = wbToday();
+    if (d.indexOf(t) < 0) { d.push(t); store.set('reviewDays', d.slice(-400)); }
+  }
+  function wbStreak() {
+    const set = new Set(wbReviewDaysGet());
+    let n = 0;
+    const d = new Date();
+    for (;;) {
+      const k = wbYmd(d);
+      if (!set.has(k)) break;
+      n++;
+      d.setDate(d.getDate() - 1);
+    }
+    return n;
+  }
+  function wbLevenshtein(a, b) {
+    a = String(a || ''); b = String(b || '');
+    const m = a.length, n = b.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1,
+          dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+    }
+    return dp[m][n];
+  }
   function revState() {
     if (!S.rev) {
       S.rev = { phase: 'setup', cfg: { cat: 'all', chapter: 'all', mode: 'due', quizType: 'en2zh', limit: 20 },
-        queue: [], idx: 0, answered: false, sel: -1, correct: 0, wrong: [], input: '', lastOk: null };
+        queue: [], idx: 0, answered: false, sel: -1, correct: 0, wrong: [], input: '',
+        rated: null, chosen: '', spellDist: 0, lastOk: null };
     }
     if (!S.rev.cfg) S.rev.cfg = {};
     if (!S.rev.cfg.quizType) S.rev.cfg.quizType = 'en2zh';
@@ -255,20 +291,25 @@
       return true;
     });
   }
-  function wbSchedule(g, ok) {
+  /** rating: 'again' 忘记 / 'hard' 模糊 / 'good' 记得 */
+  function wbSchedule(g, rating) {
     wbEnsureSrs(g);
     const s = g.srs;
-    if (ok) {
-      s.reps = (s.reps || 0) + 1;
-      s.interval = s.reps <= 1 ? 1 : (s.reps === 2 ? 3 : Math.max(3, Math.round((s.interval || 1) * (s.ease || 2.5))));
-      s.ease = Math.min(2.9, (s.ease || 2.5) + 0.1);
-      if (s.lastWrong) delete s.lastWrong;
-    } else {
+    if (rating === 'again') {
       s.lapses = (s.lapses || 0) + 1;
       s.reps = 0;
       s.interval = 1;
       s.ease = Math.max(1.3, (s.ease || 2.5) - 0.2);
       s.lastWrong = wbToday();
+    } else if (rating === 'hard') {
+      s.reps = (s.reps || 0) + 1;
+      s.interval = (s.interval || 0) < 1 ? 1 : Math.max(1, Math.round((s.interval || 1) * 1.2));
+      s.ease = Math.max(1.3, (s.ease || 2.5) - 0.05);
+    } else {
+      s.reps = (s.reps || 0) + 1;
+      s.interval = s.reps <= 1 ? 1 : (s.reps === 2 ? 3 : Math.max(3, Math.round((s.interval || 1) * (s.ease || 2.5))));
+      s.ease = Math.min(2.9, (s.ease || 2.5) + 0.1);
+      if (s.lastWrong) delete s.lastWrong;
     }
     s.due = wbAddDays(wbToday(), s.interval || 1);
   }
@@ -322,7 +363,8 @@
         cat: wbEntryCat(g), src: g.src || '', options, answer: options.indexOf(correct), answerText: correct });
     });
     if (!qs.length) { toast('这个筛选下可用单词不足，无法出题'); return false; }
-    R.queue = qs; R.idx = 0; R.answered = false; R.sel = -1; R.correct = 0; R.wrong = []; R.input = ''; R.phase = 'quiz';
+    R.queue = qs; R.idx = 0; R.answered = false; R.sel = -1; R.correct = 0; R.wrong = []; R.input = '';
+    R.rated = null; R.chosen = ''; R.spellDist = 0; R.lastOk = null; R.phase = 'quiz';
     showView('review');
     return true;
   }
@@ -345,17 +387,33 @@
     revQueueFrom(wbShuffle(list), R.cfg);
     toast('只练本轮错词：' + list.length + ' 张');
   }
-  function revFinish(ok, chosen) {
+  function revFinish(ok, chosen, dist) {
     const R = revState();
     const q = R.queue[R.idx];
     if (!q) return;
     R.answered = true;
-    R.lastOk = ok;
+    R.lastOk = !!ok;
+    R.chosen = chosen || '';
+    R.spellDist = Number(dist) || 0;
+    R.rated = null;
+    showView('review');
+  }
+  function revApplyRating(level) {
+    const R = revState();
+    const q = R.queue[R.idx];
+    if (!q || !R.answered || R.rated) return;
     const g = (S.glossary || []).find(x => x.id === q.entryId);
-    if (g) { wbSchedule(g, ok); saveGlossary(); updateCounts(); }
-    if (ok) R.correct++;
+    if (g) { wbSchedule(g, level); saveGlossary(); updateCounts(); }
+    R.rated = level;
+    if (R.lastOk) R.correct++;
     else R.wrong.push({ entryId: q.entryId, term: q.term, type: q.type, correct: q.answerText,
-      chosen: chosen || '', src: q.src || '' });
+      chosen: R.chosen, src: q.src || '' });
+    wbMarkReviewDay();
+  }
+  function revRate(level) {
+    const R = revState();
+    if (!R.answered || R.rated) return;
+    revApplyRating(level);
     showView('review');
   }
   function revAnswer(i) {
@@ -363,7 +421,7 @@
     const q = R.queue[R.idx];
     if (!q || q.type !== 'choice' || R.answered || i < 0 || i >= q.options.length) return;
     R.sel = i;
-    revFinish(i === q.answer, q.options[i]);
+    revFinish(i === q.answer, q.options[i], 0);
   }
   function revSubmitSpell() {
     const R = revState();
@@ -372,14 +430,17 @@
     const input = (($('#revInput') || {}).value) || '';
     if (!input.trim()) { toast('先输入答案'); return; }
     R.input = input;
-    revFinish(wbSpellNorm(input) === wbSpellNorm(q.answerText), input.trim());
+    const ok = wbSpellNorm(input) === wbSpellNorm(q.answerText);
+    const dist = wbLevenshtein(wbSpellNorm(input), wbSpellNorm(q.answerText));
+    revFinish(ok, input.trim(), dist);
   }
   function revNext() {
     const R = revState();
     if (!R.answered) return;
+    if (!R.rated) revApplyRating(R.lastOk ? 'good' : 'again');
     R.idx++;
     if (R.idx >= R.queue.length) R.phase = 'done';
-    else { R.answered = false; R.sel = -1; R.input = ''; }
+    else { R.answered = false; R.sel = -1; R.input = ''; R.rated = null; R.chosen = ''; R.spellDist = 0; }
     showView('review');
   }
 
@@ -2903,6 +2964,16 @@
 
     'glossary-filter': (el) => { S.wbFilter = el.dataset.cat || 'all'; showView('glossary'); },
     'glossary-search': () => { S.wbQuery = ((($('#gSearch') || {}).value) || '').trim(); showView('glossary'); },
+    'glossary-edit': (el) => {
+      const id = el.dataset.id;
+      const it = (S.glossary || []).find(g => g.id === id);
+      if (!it) return;
+      const v = window.prompt('修改「' + it.en + '」的解释 / 上下文：', it.note || '');
+      if (v === null) return;
+      it.note = String(v).trim();
+      saveGlossary(); updateCounts(); showView('glossary');
+      toast('已更新释义');
+    },
     'glossary-add': () => {
       const en = (((($('#gEn') || {}).value) || '')).trim();
       const note = (((($('#gNote') || {}).value) || '')).trim();
@@ -2952,6 +3023,7 @@
     'review-start': () => revBuildQueue(),
     'review-answer': (el) => revAnswer(parseInt(el.dataset.i, 10)),
     'review-spell-submit': () => revSubmitSpell(),
+    'review-rate': (el) => revRate(el.dataset.level),
     'review-next': () => revNext(),
     'review-retry-wrong': () => revRetryWrong(),
     'review-restart': () => { if (S.rev) { S.rev.phase = 'setup'; } showView('review'); },
@@ -3221,6 +3293,25 @@
         renderPageImage();
         return;
       }
+
+      if (e.target.id === 'textSizeSelect') {
+        S.ui.textSize = parseInt(e.target.value, 10) || 16;
+        saveUi();
+        applyTextStyle();
+        return;
+      }
+      if (e.target.id === 'textFontSelect') {
+        S.ui.textFont = e.target.value || 'default';
+        saveUi();
+        applyTextStyle();
+        return;
+      }
+      if (e.target.id === 'textLineSelect') {
+        S.ui.textLine = parseFloat(e.target.value) || 1.8;
+        saveUi();
+        applyTextStyle();
+        return;
+      }
       if (e.target.id === 'imgScaleSelect') {
         S.ui.imgScale = parseFloat(e.target.value) || 0.5;
         saveUi();
@@ -3277,7 +3368,10 @@
         return;
       }
       if (S.rev.answered) {
-        if (e.key === 'Enter') ACTIONS['review-next']();
+        if (e.key === 'Enter') { ACTIONS['review-next'](); return; }
+        if (!S.rev.rated && /^[1-3]$/.test(e.key)) {
+          ACTIONS['review-rate']({ dataset: { level: ['again', 'hard', 'good'][Number(e.key) - 1] } });
+        }
         return;
       }
       const q = S.rev.queue && S.rev.queue[S.rev.idx];
@@ -3305,6 +3399,31 @@
     store.set('ui', S.ui);
   }
 
+
+  function applyTextStyle() {
+    const pane = $('#textPane');
+    if (!pane) return;
+    const fonts = {
+      'default': 'var(--font, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif)',
+      'serif': 'Georgia, "Times New Roman", "SimSun", serif',
+      'sans': '"Microsoft YaHei", "PingFang SC", Arial, sans-serif',
+      'kai': '"KaiTi", "STKaiti", "Kaiti SC", serif',
+      'mono': 'Consolas, "Cascadia Mono", "Courier New", monospace'
+    };
+    const size = Number(S.ui.textSize) || 16;
+    const line = Number(S.ui.textLine) || 1.8;
+    const font = fonts[S.ui.textFont] || fonts['default'];
+    pane.style.setProperty('--tp-size', size + 'px');
+    pane.style.setProperty('--tp-line', String(line));
+    pane.style.setProperty('--tp-font', font);
+    const ts = $('#textSizeSelect');
+    if (ts) ts.value = String(size);
+    const tf = $('#textFontSelect');
+    if (tf) tf.value = S.ui.textFont || 'default';
+    const tl = $('#textLineSelect');
+    if (tl) tl.value = String(line);
+  }
+
   function applyUi() {
     const ui = S.ui;
     const side = $('#sidebar');
@@ -3325,6 +3444,7 @@
     if (sp) sp.value = ui.spread === 'double' ? 'double' : 'single';
     const ims = $('#imgScaleSelect');
     if (ims) ims.value = String(ui.imgScale || 0.5);
+    applyTextStyle();
   }
 
   function toggleTop() {
@@ -3523,7 +3643,8 @@
     generate, PROMPTS,
     collectData, doAutoBackup, refreshBackupInfo, openPromptEditor,
     textHash, resolveHighlights,
-    notes: () => S.notes
+    notes: () => S.notes,
+    reviewStreak: wbStreak, reviewDays: wbReviewDaysGet
   };
 
   document.addEventListener('DOMContentLoaded', init);
