@@ -421,7 +421,7 @@
           '<div class="tiny">正确释义：' + global.U.esc(w.correct) + '</div></div>';
       });
     }
-    h += '<div class="toolbar" style="margin-top:16px"><button class="btn primary" data-act="review-restart">再复习一轮</button>' +
+    h += '<div class="toolbar" style="margin-top:16px"><button class="btn primary" data-act="review-restart">调整范围再复习</button>' +
       '<button class="btn" data-view="glossary">返回单词本</button></div></div>';
     return h;
   }
