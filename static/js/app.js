@@ -107,6 +107,8 @@
   function saveGlossary() { store.set('glossary', S.glossary); scheduleAutoBackup(); }
   function wbFlagGet() { return store.get('wordbookV1', false); }
   function wbFlagSet() { store.set('wordbookV1', true); }
+  function wbV2Get() { return store.get('wordbookV2', false); }
+  function wbV2Set() { store.set('wordbookV2', true); }
 
   /* ---------------------------------------------------------- 单词本 */
   const WB_CAT_NAMES = { term: '专业术语', word: '普通词', phrase: '短语/搭配', abbr: '缩写/符号' };
@@ -244,6 +246,38 @@
     wbFlagSet();
     if (n) { saveGlossary(); updateCounts(); toast('已把 ' + n + ' 个历史查词同步到单词本', 2800); }
     return n;
+  }
+
+  function countLookupHistory() {
+    const seen = new Set();
+    Object.keys(S.highlights || {}).forEach(sid => {
+      (S.highlights[sid] || []).forEach(h => {
+        if (h && h.term && h.text) seen.add(wbCleanTerm(h.text).toLowerCase());
+      });
+    });
+    return seen.size;
+  }
+
+  /** 重新按当前规则自动分类（会覆盖手动修改，用户主动点击/升级时执行） */
+  function reclassifyWordbook() {
+    let n = 0;
+    (S.glossary || []).forEach(g => {
+      if (!g || !g.en) return;
+      const cat = classifyTerm(g.en, g.note || '');
+      if (g.cat !== cat) { g.cat = cat; n++; }
+    });
+    if (n) { saveGlossary(); updateCounts(); }
+    return n;
+  }
+
+  /** v2：修复旧迁移没跑/没保存导致单词本缺词，并重新分类 */
+  function ensureWordbookV2() {
+    if (wbV2Get()) return;
+    const hist = countLookupHistory();
+    if (hist > (S.glossary || []).length + 5) migrateLookupHistory(true);
+    const n = reclassifyWordbook();
+    wbV2Set();
+    if (n) toast('已重新分类 ' + n + ' 条单词', 2200);
   }
 
   function saveMistakes() { store.set('mistakes', S.mistakes); scheduleAutoBackup(); }
@@ -2152,6 +2186,7 @@
         if (d.ui && d.ui.autoBackup !== undefined) { S.ui.autoBackup = !!d.ui.autoBackup; saveUi(); }
         normalizeGlossary();
         migrateLookupHistory(true);
+        reclassifyWordbook();
         renderToc(); showView('study'); toast('备份已导入');
       } catch (e) { toast('导入失败：文件格式不对'); }
     };
@@ -2670,11 +2705,10 @@
     'glossary-search': () => { S.wbQuery = ((($('#gSearch') || {}).value) || '').trim(); showView('glossary'); },
     'glossary-add': () => {
       const en = (((($('#gEn') || {}).value) || '')).trim();
-      const zh = (((($('#gZh') || {}).value) || '')).trim();
       const note = (((($('#gNote') || {}).value) || '')).trim();
       if (!en) { toast('单词 / 术语不能为空'); return; }
       const cat = ((($('#gCat') || {}).value) || '') || classifyTerm(en, note);
-      wbAdd({ en, zh, note, cat, src: S.chapter ? ('第' + S.chapter.num + '章') : '', source: 'manual' });
+      wbAdd({ en, zh: '', note, cat, src: S.chapter ? ('第' + S.chapter.num + '章') : '', source: 'manual' });
       saveGlossary(); updateCounts(); showView('glossary');
       toast('已加入单词本');
     },
@@ -2689,17 +2723,27 @@
       saveGlossary(); updateCounts(); showView('glossary');
     },
     'glossary-clear': () => { if (confirm('确定清空单词本？')) { S.glossary = []; saveGlossary(); updateCounts(); showView('glossary'); } },
+    'glossary-reclass': () => {
+      const n = reclassifyWordbook();
+      saveGlossary(); updateCounts(); showView('glossary');
+      toast(n ? ('已重新自动分类 ' + n + ' 条') : '分类已是最新');
+    },
+    'glossary-resync': () => {
+      const n = migrateLookupHistory(true);
+      const m = reclassifyWordbook();
+      saveGlossary(); updateCounts(); showView('glossary');
+      toast('已同步历史查词' + (n ? ('，新增 ' + n + ' 条') : '') + (m ? ('，重新分类 ' + m + ' 条') : ''), 2600);
+    },
     'glossary-export-csv': () => {
       const csv = '正面,背面,分类\n' + S.glossary.map(g =>
         csvCell(g.en + (g.src ? '（' + g.src + '）' : '')) + ',' +
-        csvCell([g.zh, g.note].filter(Boolean).join('；')) + ',' + csvCell(wbCatName(g.cat))
+        csvCell(g.note || '') + ',' + csvCell(wbCatName(g.cat))
       ).join('\n');
       downloadFile('单词本-' + today() + '.csv', csv, 'text/csv');
     },
     'glossary-export-md': () => {
-      const mdTxt = '| 单词 / 术语 | 分类 | 中文 | 解释 | 来源 |\n| --- | --- | --- | --- | --- |\n' +
-        S.glossary.map(g => '| ' + g.en + ' | ' + wbCatName(g.cat) + ' | ' + (g.zh || '') + ' | ' +
-          (g.note || '') + ' | ' + (g.src || '') + ' |').join('\n');
+      const mdTxt = '| 单词 / 术语 | 分类 | 解释 | 来源 |\n| --- | --- | --- | --- |\n' +
+        S.glossary.map(g => '| ' + g.en + ' | ' + wbCatName(g.cat) + ' | ' + (g.note || '') + ' | ' + (g.src || '') + ' |').join('\n');
       downloadFile('单词本-' + today() + '.md', mdTxt, 'text/markdown');
     },
 
@@ -3203,6 +3247,7 @@
       await loadBook();
       normalizeGlossary();
       migrateLookupHistory();
+      ensureWordbookV2();
     } catch (e) {
       $('#workBody').innerHTML = '<div class="card"><div class="card-title">教材数据未就绪</div>' +
         '<div class="tiny">首次使用：把你自己合法获得的教材 PDF 放到项目根目录并命名为 <code>book.pdf</code>（或复制 <code>config.example.json</code> 为 <code>config.json</code> 填写路径），然后运行 <code>python tools/build_book.py</code>，再刷新本页。</div>' +

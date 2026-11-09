@@ -237,20 +237,25 @@
   function glossary() {
     const S = global.APP.state;
     const all = Array.isArray(S.glossary) ? S.glossary : [];
+    const VALID = ['term', 'word', 'phrase', 'abbr'];
     const CATS = [
       ['all', '全部'], ['term', '专业术语'], ['word', '普通词'],
       ['phrase', '短语/搭配'], ['abbr', '缩写/符号']
     ];
+    const catOf = (g) => (VALID.indexOf(g.cat) >= 0 ? g.cat : 'term');
     const filter = S.wbFilter || 'all';
     const q = String(S.wbQuery || '').trim().toLowerCase();
     const counts = { all: all.length, term: 0, word: 0, phrase: 0, abbr: 0 };
-    all.forEach(g => {
-      const c = g.cat || 'term';
-      if (counts[c] !== undefined) counts[c]++;
+    all.forEach(g => { counts[catOf(g)]++; });
+    const histSet = new Set();
+    Object.keys(S.highlights || {}).forEach(sid => {
+      (S.highlights[sid] || []).forEach(h => {
+        if (h && h.term && h.text) histSet.add(String(h.text).trim().toLowerCase());
+      });
     });
+    const hist = histSet.size;
     const items = all.filter(g => {
-      const cat = g.cat || 'term';
-      if (filter !== 'all' && cat !== filter) return false;
+      if (filter !== 'all' && catOf(g) !== filter) return false;
       if (!q) return true;
       return ([g.en, g.zh, g.note].join(' ') || '').toLowerCase().indexOf(q) >= 0;
     });
@@ -258,23 +263,26 @@
     let h = '<div class="card"><div class="card-title">新增单词 / 术语 <span class="tag">查词时自动收录</span></div>' +
       '<div class="row" style="flex-wrap:wrap;gap:8px">' +
       '<input class="input" id="gEn" placeholder="单词或术语，如 inductor / duty cycle" style="flex:2;min-width:200px">' +
-      '<input class="input" id="gZh" placeholder="中文释义" style="flex:1;min-width:120px">' +
       '<select class="input" id="gCat" style="max-width:128px">' +
       CATS.slice(1).map(c => '<option value="' + c[0] + '">' + c[1] + '</option>').join('') +
       '</select>' +
-      '<input class="input" id="gNote" placeholder="例句 / 易混点（可选）" style="flex:2;min-width:160px">' +
+      '<input class="input" id="gNote" placeholder="释义 / 例句 / 易混点" style="flex:2;min-width:240px">' +
       '<button class="btn primary" data-act="glossary-add">添加</button></div></div>';
 
     h += '<div class="card"><div class="toolbar wb-cats">' +
       CATS.map(c => '<button class="btn small-btn ' + (filter === c[0] ? 'primary' : 'ghost') +
         '" data-act="glossary-filter" data-cat="' + c[0] + '">' + c[1] + ' <b>' + (counts[c[0]] || 0) + '</b></button>').join('') +
       '</div><div class="toolbar">' +
-      '<input class="input" id="gSearch" placeholder="搜索单词 / 释义" style="max-width:220px" value="' + escAttr(S.wbQuery || '') + '">' +
+      '<input class="input" id="gSearch" placeholder="搜索单词 / 解释" style="max-width:220px" value="' + escAttr(S.wbQuery || '') + '">' +
       '<button class="btn" data-act="glossary-search">搜索</button>' +
+      '<button class="btn" data-act="glossary-reclass">重新自动分类</button>' +
+      '<button class="btn" data-act="glossary-resync">重新同步历史查词</button>' +
       '<button class="btn" data-act="glossary-export-csv">导出 Anki CSV</button>' +
       '<button class="btn" data-act="glossary-export-md">导出 Markdown</button>' +
-      '<button class="btn ghost" data-act="glossary-clear">清空</button>' +
-      '<span class="tiny muted">共 ' + all.length + ' 条 · 查词自动同步</span></div></div>';
+      '<button class="btn ghost" data-act="glossary-clear">清空</button></div>' +
+      '<div class="tiny muted" style="margin-top:6px">共 ' + all.length + ' 条 · 历史查词 ' + hist + ' 条' +
+      (hist > all.length + 5 ? ' · ⚠️ 还有历史查词未收录，点上方「重新同步历史查词」' : '') +
+      ' · 查词自动同步</div></div>';
 
     if (!items.length) {
       h += '<div class="empty-state"><div class="big">📒</div>' +
@@ -284,15 +292,14 @@
         '</div>';
       return h;
     }
-    h += '<table class="gtable"><thead><tr><th style="width:22%">单词 / 术语</th><th style="width:15%">分类</th>' +
-      '<th style="width:15%">中文</th><th>解释 / 上下文</th><th style="width:80px">来源</th><th style="width:44px"></th></tr></thead><tbody>';
+    h += '<table class="gtable"><thead><tr><th style="width:26%">单词 / 术语</th><th style="width:16%">分类</th>' +
+      '<th>解释 / 上下文</th><th style="width:80px">来源</th><th style="width:44px"></th></tr></thead><tbody>';
     items.forEach(g => {
-      const cat = g.cat || 'term';
+      const cat = catOf(g);
       h += '<tr><td class="en">' + global.U.esc(g.en) + '</td>' +
         '<td><select class="input cat-select" data-id="' + escAttr(g.id) + '">' +
         CATS.slice(1).map(c => '<option value="' + c[0] + '"' + (cat === c[0] ? ' selected' : '') + '>' + c[1] + '</option>').join('') +
         '</select></td>' +
-        '<td>' + global.U.esc(g.zh || '') + '</td>' +
         '<td>' + global.U.esc(g.note || '') + '</td>' +
         '<td class="tiny muted">' + global.U.esc(g.src || '') + '</td>' +
         '<td><button class="btn tiny-btn ghost" data-act="glossary-del" data-id="' + escAttr(g.id) + '">删</button></td></tr>';
