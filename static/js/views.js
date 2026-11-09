@@ -1,9 +1,13 @@
 /* ============================================================
- * views.js — 独立页面视图：学习计划 / 术语本 / 错题本 / 周测
+ * views.js — 独立页面视图：学习计划 / 单词本 / 错题本 / 周测
  * 只负责生成 HTML 字符串；交互逻辑在 app.js 的 data-act 处理器里
  * ============================================================ */
 (function (global) {
   'use strict';
+
+  function escAttr(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
 
   const PLAN = [
     {
@@ -13,7 +17,7 @@
         { id: 'w1a', t: 'Ch.1 引言：快速通读，建立"功率处理 / 变换器 / 应用"框架（半天）' },
         { id: 'w1b', t: 'Ch.2：伏秒平衡、电荷平衡、小纹波近似（本章是全书的语法）' },
         { id: 'w1c', t: '产出：手推 Buck / Boost / Buck–Boost 的 M(D)，并用 LTspice 各仿真一次' },
-        { id: 'w1d', t: '术语本录入 25–30 个核心术语' }
+        { id: 'w1d', t: '单词本录入 25–30 个核心术语' }
       ]
     },
     {
@@ -135,7 +139,7 @@
         tasks.push({ id: 'w' + (i + 1) + 'a', t: range + '：通读 + 精读（' + b.chs.map(c => 'Ch.' + c.num).join('、') + '）' });
         tasks.push({ id: 'w' + (i + 1) + 'b', t: '产出：手推本章核心公式 / 画知识地图，再用「章节提纲」或「学习包」整理一遍' });
         tasks.push({ id: 'w' + (i + 1) + 'c', t: '练习：做课后题 3–5 道（用「习题」页），错题进错题本' });
-        tasks.push({ id: 'w' + (i + 1) + 'd', t: '复盘：费曼法讲一遍本章主线；术语本录入 10–20 条' });
+        tasks.push({ id: 'w' + (i + 1) + 'd', t: '复盘：费曼法讲一遍本章主线；单词本录入 10–20 条' });
       } else {
         tasks.push({ id: 'w' + (i + 1) + 'a', t: '机动周：补前面没弄懂的内容，或做整册自测 / 总复习' });
       }
@@ -232,26 +236,66 @@
 
   function glossary() {
     const S = global.APP.state;
-    const items = S.glossary || [];
-    let h = '<div class="card"><div class="card-title">新增术语</div><div class="row">' +
-      '<input class="input" id="gEn" placeholder="英文术语，如 small-ripple approximation" style="flex:2;min-width:220px">' +
-      '<input class="input" id="gZh" placeholder="中文译名" style="flex:1;min-width:130px">' +
-      '<input class="input" id="gNote" placeholder="一句话解释 / 易混点" style="flex:2;min-width:200px">' +
-      '<button class="btn primary" data-act="glossary-add">添加</button></div>' +
-      '<div class="toolbar"><button class="btn" data-act="glossary-export-csv">导出 Anki CSV</button>' +
+    const all = Array.isArray(S.glossary) ? S.glossary : [];
+    const CATS = [
+      ['all', '全部'], ['term', '专业术语'], ['word', '普通词'],
+      ['phrase', '短语/搭配'], ['abbr', '缩写/符号']
+    ];
+    const filter = S.wbFilter || 'all';
+    const q = String(S.wbQuery || '').trim().toLowerCase();
+    const counts = { all: all.length, term: 0, word: 0, phrase: 0, abbr: 0 };
+    all.forEach(g => {
+      const c = g.cat || 'term';
+      if (counts[c] !== undefined) counts[c]++;
+    });
+    const items = all.filter(g => {
+      const cat = g.cat || 'term';
+      if (filter !== 'all' && cat !== filter) return false;
+      if (!q) return true;
+      return ([g.en, g.zh, g.note].join(' ') || '').toLowerCase().indexOf(q) >= 0;
+    });
+
+    let h = '<div class="card"><div class="card-title">新增单词 / 术语 <span class="tag">查词时自动收录</span></div>' +
+      '<div class="row" style="flex-wrap:wrap;gap:8px">' +
+      '<input class="input" id="gEn" placeholder="单词或术语，如 inductor / duty cycle" style="flex:2;min-width:200px">' +
+      '<input class="input" id="gZh" placeholder="中文释义" style="flex:1;min-width:120px">' +
+      '<select class="input" id="gCat" style="max-width:128px">' +
+      CATS.slice(1).map(c => '<option value="' + c[0] + '">' + c[1] + '</option>').join('') +
+      '</select>' +
+      '<input class="input" id="gNote" placeholder="例句 / 易混点（可选）" style="flex:2;min-width:160px">' +
+      '<button class="btn primary" data-act="glossary-add">添加</button></div></div>';
+
+    h += '<div class="card"><div class="toolbar wb-cats">' +
+      CATS.map(c => '<button class="btn small-btn ' + (filter === c[0] ? 'primary' : 'ghost') +
+        '" data-act="glossary-filter" data-cat="' + c[0] + '">' + c[1] + ' <b>' + (counts[c[0]] || 0) + '</b></button>').join('') +
+      '</div><div class="toolbar">' +
+      '<input class="input" id="gSearch" placeholder="搜索单词 / 释义" style="max-width:220px" value="' + escAttr(S.wbQuery || '') + '">' +
+      '<button class="btn" data-act="glossary-search">搜索</button>' +
+      '<button class="btn" data-act="glossary-export-csv">导出 Anki CSV</button>' +
       '<button class="btn" data-act="glossary-export-md">导出 Markdown</button>' +
       '<button class="btn ghost" data-act="glossary-clear">清空</button>' +
-      '<span class="tiny muted">共 ' + items.length + ' 条 · 精读「术语卡」生成后可直接导入</span></div></div>';
+      '<span class="tiny muted">共 ' + all.length + ' 条 · 查词自动同步</span></div></div>';
 
     if (!items.length) {
-      h += '<div class="empty-state"><div class="big">📒</div>还没有术语。到「精读 → 术语卡」生成后点「导入术语本」，或在上方手动添加。</div>';
+      h += '<div class="empty-state"><div class="big">📒</div>' +
+        (all.length
+          ? '没有匹配的单词，换个分类或关键词试试。'
+          : '单词本还是空的。在「提取原文」里选中一个词，点「⚡ 查词」，查询结果会自动收进来并自动分类。') +
+        '</div>';
       return h;
     }
-    h += '<table class="gtable"><thead><tr><th style="width:26%">英文</th><th style="width:20%">中文</th><th>解释 / 易混点</th><th style="width:90px">来源</th><th style="width:50px"></th></tr></thead><tbody>';
-    items.forEach((g, i) => {
-      h += '<tr><td class="en">' + global.U.esc(g.en) + '</td><td>' + global.U.esc(g.zh) + '</td><td>' +
-        global.U.esc(g.note) + '</td><td class="tiny muted">' + global.U.esc(g.src || '') + '</td>' +
-        '<td><button class="btn tiny-btn ghost" data-act="glossary-del" data-i="' + i + '">删</button></td></tr>';
+    h += '<table class="gtable"><thead><tr><th style="width:22%">单词 / 术语</th><th style="width:15%">分类</th>' +
+      '<th style="width:15%">中文</th><th>解释 / 上下文</th><th style="width:80px">来源</th><th style="width:44px"></th></tr></thead><tbody>';
+    items.forEach(g => {
+      const cat = g.cat || 'term';
+      h += '<tr><td class="en">' + global.U.esc(g.en) + '</td>' +
+        '<td><select class="input cat-select" data-id="' + escAttr(g.id) + '">' +
+        CATS.slice(1).map(c => '<option value="' + c[0] + '"' + (cat === c[0] ? ' selected' : '') + '>' + c[1] + '</option>').join('') +
+        '</select></td>' +
+        '<td>' + global.U.esc(g.zh || '') + '</td>' +
+        '<td>' + global.U.esc(g.note || '') + '</td>' +
+        '<td class="tiny muted">' + global.U.esc(g.src || '') + '</td>' +
+        '<td><button class="btn tiny-btn ghost" data-act="glossary-del" data-id="' + escAttr(g.id) + '">删</button></td></tr>';
     });
     h += '</tbody></table>';
     return h;

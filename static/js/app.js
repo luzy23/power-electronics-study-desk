@@ -105,6 +105,147 @@
     saveArchive({ probSolves: list });
   }
   function saveGlossary() { store.set('glossary', S.glossary); scheduleAutoBackup(); }
+  function wbFlagGet() { return store.get('wordbookV1', false); }
+  function wbFlagSet() { store.set('wordbookV1', true); }
+
+  /* ---------------------------------------------------------- 单词本 */
+  const WB_CAT_NAMES = { term: '专业术语', word: '普通词', phrase: '短语/搭配', abbr: '缩写/符号' };
+  const WB_TECH_HINTS = ['converter','inverter','inductor','capacitor','resistor','transistor','diode','switch','switching','rectifier','transformer','winding','core','flux','saturation','ripple','duty cycle','volt-second','charge balance','small-ripple','steady-state','transient','small-signal','large-signal','state-space','state space','transfer function','bode','pole','zero','feedback','loop','stability','compensator','modulator','pwm','pulse-width','pulse width','mosfet','bjt','igbt','rms','dcm','ccm','buck','boost','cuk','flyback','forward converter','resonant','soft switching','zero voltage','zero current','efficiency','loss','conduction','switching loss','equivalent circuit','averaging','linearization','perturbation','magnetics','inductance','capacitance','impedance','admittance','harmonic','fourier','laplace','gain','phase margin','crossover','frequency response','thermal','filter','diode bridge','semiconductor','amplifier','oscillator','sampling','quantization'];
+  function wbCatName(id) { return WB_CAT_NAMES[id] || '专业术语'; }
+  function wbCleanTerm(s) {
+    return String(s == null ? '' : s)
+      .replace(/^[\s"'“”‘’(),.;:…\-–—]+/, '')
+      .replace(/[\s"'“”‘’(),.;:…\-–—]+$/, '')
+      .replace(/\s+/g, ' ').trim();
+  }
+
+  function wbIsAbbr(t) {
+    const s = String(t || '').trim();
+    if (!s) return false;
+    if (/^[A-Z0-9+\-/.&]{2,10}$/.test(s) && /[A-Z]{2}/.test(s)) return true;
+    if (/^[A-Za-z]{1,8}\d+[A-Za-z0-9]*$/.test(s)) return true;
+    return false;
+  }
+  function wbIsPhrase(t) { return /[\s\-]/.test(String(t || '').trim()); }
+  function wbIsTech(t) {
+    const s = String(t || '').toLowerCase().trim();
+    if (!s) return false;
+    if (WB_TECH_HINTS.indexOf(s) >= 0) return true;
+    if (WB_TECH_HINTS.some(h => h.indexOf(' ') >= 0 && s.indexOf(h) >= 0)) return true;
+    const words = s.split(/[^a-z0-9+]+/).filter(Boolean);
+    return words.some(w => WB_TECH_HINTS.indexOf(w) >= 0);
+  }
+
+  /** 初步分类：AI 答案里标了（普通词）就是普通词；缩写/符号单独一类；其余按专业术语处理 */
+  function classifyTerm(term, answer) {
+    const t = wbCleanTerm(term);
+    const a = String(answer || '');
+    if (wbIsAbbr(t)) return 'abbr';
+    if (a && /（普通词）|\(普通词\)/.test(a)) return wbIsPhrase(t) ? 'phrase' : 'word';
+    if (wbIsTech(t)) return 'term';
+    if (!a && wbIsPhrase(t)) return 'phrase';
+    return 'term';
+  }
+
+  function wbExtractZh(text) {
+    const m = /(?:译名|释义)[：:]\s*([^\n｜|]+)/.exec(String(text || ''));
+    if (!m) return '';
+    return m[1].replace(/[（(]普通词[）)]/g, '').replace(/[。；;].*$/, '').trim().slice(0, 40);
+  }
+
+  function wbSectionSource(sid) {
+    for (const ch of (S.chapters || [])) {
+      if ((ch.sections || []).some(x => x.id === sid)) return '第' + ch.num + '章';
+    }
+    return '';
+  }
+
+  function wbAdd(entry) {
+    const en = wbCleanTerm((entry && entry.en) || '');
+    if (!en) return null;
+    if (!Array.isArray(S.glossary)) S.glossary = [];
+    const zh = String(entry.zh || '').trim();
+    const note = String(entry.note || '').trim();
+    const src = String(entry.src || '').trim();
+    const cat = entry.cat || classifyTerm(en, note);
+    const key = en.toLowerCase();
+    const cur = S.glossary.find(g => String(g.en || '').toLowerCase() === key);
+    if (cur) {
+      if (!cur.zh && zh) cur.zh = zh;
+      if (!cur.note && note) cur.note = note;
+      if (!cur.src && src) cur.src = src;
+      if (!cur.cat) cur.cat = cat;
+      cur.updatedAt = nowStr();
+      return { item: cur, created: false };
+    }
+    const item = { id: uid(), en, zh, note, cat, src,
+      source: entry.source || 'lookup', createdAt: nowStr() };
+    S.glossary.push(item);
+    return { item, created: true };
+  }
+
+  /** 查词结果自动同步到单词本（已有则补全字段，不重复） */
+  function syncLookupWord(term, text, opts) {
+    const r = wbAdd({
+      en: term,
+      zh: wbExtractZh(text),
+      note: compactMeaning(text, term),
+      cat: classifyTerm(term, text),
+      src: (S.chapter ? ('第' + S.chapter.num + '章') : ''),
+      source: 'lookup'
+    });
+    if (!r) return;
+    saveGlossary(); updateCounts();
+    if (r.created && !(opts && opts.silent)) toast('已自动加入单词本 · ' + wbCatName(r.item.cat), 1600);
+  }
+
+  /** 兼容旧数据：补 id / 分类，按单词去重 */
+  function normalizeGlossary() {
+    if (!Array.isArray(S.glossary)) S.glossary = [];
+    let changed = false;
+    const out = [];
+    S.glossary.forEach(g => {
+      if (!g || !g.en) { changed = true; return; }
+      const en = wbCleanTerm(g.en);
+      if (!en) { changed = true; return; }
+      const key = en.toLowerCase();
+      const cat = g.cat || classifyTerm(en, g.note || '');
+      if (!g.cat) changed = true;
+      if (!g.id) changed = true;
+      const cur = out.find(x => String(x.en || '').toLowerCase() === key);
+      if (cur) {
+        changed = true;
+        if (!cur.zh && g.zh) cur.zh = g.zh;
+        if (!cur.note && g.note) cur.note = g.note;
+        if (!cur.src && g.src) cur.src = g.src;
+        return;
+      }
+      out.push(Object.assign({}, g, { en, cat, id: g.id || uid(), source: g.source || 'manual' }));
+    });
+    S.glossary = out;
+    if (changed) { saveGlossary(); updateCounts(); }
+    return changed;
+  }
+
+  /** 历史查词迁移：把以前查词产生的高亮标记（term:true）同步到单词本，只跑一次 */
+  function migrateLookupHistory(force) {
+    if (!force && wbFlagGet()) return 0;
+    let n = 0;
+    Object.keys(S.highlights || {}).forEach(sid => {
+      (S.highlights[sid] || []).forEach(h => {
+        if (!h || !h.term || !h.text) return;
+        const en = String(h.text).trim();
+        if (!en) return;
+        const note = String(h.meaning || '');
+        const r = wbAdd({ en, zh: '', note, cat: classifyTerm(en, note), src: wbSectionSource(sid), source: 'lookup' });
+        if (r && r.created) n++;
+      });
+    });
+    wbFlagSet();
+    if (n) { saveGlossary(); updateCounts(); toast('已把 ' + n + ' 个历史查词同步到单词本', 2800); }
+    return n;
+  }
+
   function saveMistakes() { store.set('mistakes', S.mistakes); scheduleAutoBackup(); }
   function savePlan() { store.set('plan', S.plan); scheduleAutoBackup(); }
   function savePlanCfg() { store.set('planCfg', S.planCfg); scheduleAutoBackup(); }
@@ -1108,7 +1249,7 @@
   }
 
   const TOOL_EXTRA = {
-    cards: '<button class="btn small-btn" data-act="cards-import" data-key="cards">导入术语本</button>' +
+    cards: '<button class="btn small-btn" data-act="cards-import" data-key="cards">导入单词本</button>' +
       '<button class="btn small-btn" data-act="cards-csv" data-key="cards">下载 CSV</button>',
     pack: '<button class="btn small-btn" data-act="pack-export" data-key="pack">导出 Markdown</button>' +
       '<button class="btn small-btn" data-act="pack-print" data-key="pack">打印</button>',
@@ -1685,6 +1826,7 @@
     if (cached) {
       body.classList.remove('loading');
       S.termLastText = cached;
+      syncLookupWord(term, cached, { silent: true });
       U.renderMarkdown(body, cached);
       if (saveBtn) saveBtn.disabled = false;
       if (termRanges.length) addTermHighlights(termRanges, compactMeaning(cached, term));
@@ -1712,6 +1854,7 @@
       }
       S.termCache[key] = text;
       S.termLastText = text;
+      if (text.trim()) syncLookupWord(term, text);
       S.termLastMs = Math.round(performance.now() - t0);
       body.classList.remove('loading');
       if (text.trim()) U.renderMarkdown(body, text);
@@ -1735,15 +1878,16 @@
     const term = String(S.selectedText || '').trim();
     const text = String(S.termLastText || (($('#tpBody') || {}).textContent || '')).trim();
     if (!term || !text) return toast('还没有查询结果');
-    const m = /译名[：:]\s*([^\n｜|]+)/.exec(text);
-    const zh = m ? m[1].trim() : text.slice(0, 30);
-    S.glossary.push({
-      en: term, zh: zh,
-      note: text.replace(/\s+/g, ' ').slice(0, 200),
-      src: S.chapter ? ('第' + S.chapter.num + '章') : ''
+    const r = wbAdd({
+      en: term,
+      zh: wbExtractZh(text),
+      note: compactMeaning(text, term),
+      cat: classifyTerm(term, text),
+      src: S.chapter ? ('第' + S.chapter.num + '章') : '',
+      source: 'lookup'
     });
     saveGlossary(); updateCounts();
-    toast('已存入术语本');
+    if (r) toast('已加入单词本 · ' + wbCatName(r.item.cat));
   }
 
   function fullTermCardFromPop() {
@@ -1759,7 +1903,7 @@
   }
 
   /* ---------------------------------------------------------- page views */
-  const VIEW_TITLES = { plan: '学习计划', glossary: '术语本', mistakes: '错题本', quiz: '周测', archive: '学习存档', settings: '设置' };
+  const VIEW_TITLES = { plan: '学习计划', glossary: '单词本', mistakes: '错题本', quiz: '周测', archive: '学习存档', settings: '设置' };
 
   function showView(name) {
     const study = $('#studyView'), page = $('#pageView');
@@ -2006,6 +2150,8 @@
         if (d.done) { S.done = d.done; saveDone(); }
         if (d.prompts) { S.customPrompts = d.prompts; savePrompts(); }
         if (d.ui && d.ui.autoBackup !== undefined) { S.ui.autoBackup = !!d.ui.autoBackup; saveUi(); }
+        normalizeGlossary();
+        migrateLookupHistory(true);
         renderToc(); showView('study'); toast('备份已导入');
       } catch (e) { toast('导入失败：文件格式不对'); }
     };
@@ -2465,7 +2611,7 @@
       let n = 0;
       rows.forEach(r => {
         if (!r[0] || /^正面/.test(r[0])) return;
-        S.glossary.push({ en: r[0], zh: r[1] || '', note: r[2] || '', src: S.chapter ? ('第' + S.chapter.num + '章') : '' });
+        wbAdd({ en: r[0], zh: r[1] || '', note: r[2] || '', cat: classifyTerm(r[0], r[2] || r[1] || ''), src: S.chapter ? ('第' + S.chapter.num + '章') : '', source: 'cards' });
         n++;
       });
       saveGlossary(); updateCounts();
@@ -2520,24 +2666,41 @@
       showView('plan');
     },
 
+    'glossary-filter': (el) => { S.wbFilter = el.dataset.cat || 'all'; showView('glossary'); },
+    'glossary-search': () => { S.wbQuery = ((($('#gSearch') || {}).value) || '').trim(); showView('glossary'); },
     'glossary-add': () => {
-      const en = ($('#gEn') || {}).value || '';
-      const zh = ($('#gZh') || {}).value || '';
-      const note = ($('#gNote') || {}).value || '';
-      if (!en.trim()) { toast('英文术语不能为空'); return; }
-      S.glossary.push({ en: en.trim(), zh: zh.trim(), note: note.trim(), src: S.chapter ? ('第' + S.chapter.num + '章') : '' });
+      const en = (((($('#gEn') || {}).value) || '')).trim();
+      const zh = (((($('#gZh') || {}).value) || '')).trim();
+      const note = (((($('#gNote') || {}).value) || '')).trim();
+      if (!en) { toast('单词 / 术语不能为空'); return; }
+      const cat = ((($('#gCat') || {}).value) || '') || classifyTerm(en, note);
+      wbAdd({ en, zh, note, cat, src: S.chapter ? ('第' + S.chapter.num + '章') : '', source: 'manual' });
+      saveGlossary(); updateCounts(); showView('glossary');
+      toast('已加入单词本');
+    },
+    'glossary-cat': (el) => {
+      const id = el.dataset.id;
+      const it = (S.glossary || []).find(g => g.id === id);
+      if (it) { it.cat = el.value; saveGlossary(); updateCounts(); showView('glossary'); toast('分类已更新 · ' + wbCatName(it.cat)); }
+    },
+    'glossary-del': (el) => {
+      const id = el.dataset.id;
+      S.glossary = (S.glossary || []).filter(g => g.id !== id);
       saveGlossary(); updateCounts(); showView('glossary');
     },
-    'glossary-del': (el) => { S.glossary.splice(Number(el.dataset.i), 1); saveGlossary(); updateCounts(); showView('glossary'); },
-    'glossary-clear': () => { if (confirm('确定清空术语本？')) { S.glossary = []; saveGlossary(); updateCounts(); showView('glossary'); } },
+    'glossary-clear': () => { if (confirm('确定清空单词本？')) { S.glossary = []; saveGlossary(); updateCounts(); showView('glossary'); } },
     'glossary-export-csv': () => {
-      const csv = '正面,背面\n' + S.glossary.map(g => csvCell(g.en + (g.src ? '（' + g.src + '）' : '')) + ',' + csvCell([g.zh, g.note].filter(Boolean).join('；'))).join('\n');
-      downloadFile('术语本-' + today() + '.csv', csv, 'text/csv');
+      const csv = '正面,背面,分类\n' + S.glossary.map(g =>
+        csvCell(g.en + (g.src ? '（' + g.src + '）' : '')) + ',' +
+        csvCell([g.zh, g.note].filter(Boolean).join('；')) + ',' + csvCell(wbCatName(g.cat))
+      ).join('\n');
+      downloadFile('单词本-' + today() + '.csv', csv, 'text/csv');
     },
     'glossary-export-md': () => {
-      const mdTxt = '| 英文 | 中文 | 解释 | 来源 |\n| --- | --- | --- | --- |\n' +
-        S.glossary.map(g => '| ' + g.en + ' | ' + g.zh + ' | ' + (g.note || '') + ' | ' + (g.src || '') + ' |').join('\n');
-      downloadFile('术语本-' + today() + '.md', mdTxt, 'text/markdown');
+      const mdTxt = '| 单词 / 术语 | 分类 | 中文 | 解释 | 来源 |\n| --- | --- | --- | --- | --- |\n' +
+        S.glossary.map(g => '| ' + g.en + ' | ' + wbCatName(g.cat) + ' | ' + (g.zh || '') + ' | ' +
+          (g.note || '') + ' | ' + (g.src || '') + ' |').join('\n');
+      downloadFile('单词本-' + today() + '.md', mdTxt, 'text/markdown');
     },
 
     'mistakes-del': (el) => { S.mistakes.splice(Number(el.dataset.i), 1); saveMistakes(); updateCounts(); showView('mistakes'); },
@@ -2776,6 +2939,8 @@
     });
 
     document.addEventListener('change', (e) => {
+      if (e.target.matches('.cat-select[data-id]')) { ACTIONS['glossary-cat'](e.target); return; }
+      if (e.target.id === 'gSearch') { S.wbQuery = (e.target.value || '').trim(); showView('glossary'); return; }
       if (e.target.id === 'promptTaskSel') { loadPromptTask(e.target.value); return; }
       if (e.target.id === 'cfgAutoBackup') {
         S.ui.autoBackup = !!e.target.checked;
@@ -3036,6 +3201,8 @@
 
     try {
       await loadBook();
+      normalizeGlossary();
+      migrateLookupHistory();
     } catch (e) {
       $('#workBody').innerHTML = '<div class="card"><div class="card-title">教材数据未就绪</div>' +
         '<div class="tiny">首次使用：把你自己合法获得的教材 PDF 放到项目根目录并命名为 <code>book.pdf</code>（或复制 <code>config.example.json</code> 为 <code>config.json</code> 填写路径），然后运行 <code>python tools/build_book.py</code>，再刷新本页。</div>' +
