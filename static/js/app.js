@@ -2418,7 +2418,8 @@
       archive: S.archive, highlights: S.highlights, done: S.done,
       planCfg: S.planCfg,
       prompts: S.customPrompts || {},
-      ui: { autoBackup: S.ui.autoBackup !== false }
+      ui: { autoBackup: S.ui.autoBackup !== false },
+      reviewDays: store.get('reviewDays', [])
     };
   }
 
@@ -2445,6 +2446,7 @@
         if (d.done) { S.done = d.done; saveDone(); }
         if (d.prompts) { S.customPrompts = d.prompts; savePrompts(); }
         if (d.ui && d.ui.autoBackup !== undefined) { S.ui.autoBackup = !!d.ui.autoBackup; saveUi(); }
+        if (d.reviewDays) store.set('reviewDays', d.reviewDays);
         normalizeGlossary();
         migrateLookupHistory(true);
         reclassifyWordbook();
