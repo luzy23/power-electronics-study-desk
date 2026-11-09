@@ -2964,6 +2964,14 @@
       showView('plan');
     },
 
+    'text-style-reset': () => {
+      S.ui.textSize = 13.6;
+      S.ui.textFont = 'default';
+      S.ui.textLine = 1.85;
+      saveUi();
+      applyTextStyle();
+      toast('已恢复原版字号 / 字体 / 行距');
+    },
     'glossary-filter': (el) => { S.wbFilter = el.dataset.cat || 'all'; showView('glossary'); },
     'glossary-search': () => { S.wbQuery = ((($('#gSearch') || {}).value) || '').trim(); showView('glossary'); },
     'glossary-edit': (el) => {
@@ -3297,7 +3305,7 @@
       }
 
       if (e.target.id === 'textSizeSelect') {
-        S.ui.textSize = parseInt(e.target.value, 10) || 16;
+        S.ui.textSize = parseFloat(e.target.value) || 13.6;
         saveUi();
         applyTextStyle();
         return;
@@ -3309,7 +3317,7 @@
         return;
       }
       if (e.target.id === 'textLineSelect') {
-        S.ui.textLine = parseFloat(e.target.value) || 1.8;
+        S.ui.textLine = parseFloat(e.target.value) || 1.85;
         saveUi();
         applyTextStyle();
         return;
@@ -3403,17 +3411,24 @@
 
 
   function applyTextStyle() {
+    if (!store.get('textStyleV2', false)) {
+      S.ui.textSize = 13.6;
+      S.ui.textFont = 'default';
+      S.ui.textLine = 1.85;
+      store.set('textStyleV2', true);
+      saveUi();
+    }
     const pane = $('#textPane');
     if (!pane) return;
     const fonts = {
-      'default': 'var(--font, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif)',
+      'default': '"Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
       'serif': 'Georgia, "Times New Roman", "SimSun", serif',
       'sans': '"Microsoft YaHei", "PingFang SC", Arial, sans-serif',
       'kai': '"KaiTi", "STKaiti", "Kaiti SC", serif',
       'mono': 'Consolas, "Cascadia Mono", "Courier New", monospace'
     };
-    const size = Number(S.ui.textSize) || 16;
-    const line = Number(S.ui.textLine) || 1.8;
+    const size = Number(S.ui.textSize) || 13.6;
+    const line = Number(S.ui.textLine) || 1.85;
     const font = fonts[S.ui.textFont] || fonts['default'];
     pane.style.setProperty('--tp-size', size + 'px');
     pane.style.setProperty('--tp-line', String(line));

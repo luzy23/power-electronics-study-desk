@@ -6,7 +6,7 @@
 <title>电力电子学习台 · Fundamentals of Power Electronics</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/vendor/katex/katex.min.css">
-<link rel="stylesheet" href="/style.css?v=20261109g">
+<link rel="stylesheet" href="/style.css?v=20261109h">
 </head>
 <body>
 
@@ -90,27 +90,36 @@
             <option value="1">图 100%</option>
           </select>
           <select id="textSizeSelect" class="dpi-select" title="原文正文字号">
+            <option value="12">字号 12</option>
+            <option value="12.5">字号 12.5</option>
+            <option value="13">字号 13</option>
+            <option value="13.6" selected>字号 13.6（原版）</option>
             <option value="14">字号 14</option>
             <option value="15">字号 15</option>
-            <option value="16" selected>字号 16</option>
+            <option value="16">字号 16</option>
             <option value="17">字号 17</option>
             <option value="18">字号 18</option>
             <option value="20">字号 20</option>
             <option value="22">字号 22</option>
+            <option value="24">字号 24</option>
           </select>
           <select id="textFontSelect" class="dpi-select" title="原文正文字体">
-            <option value="default">默认字体</option>
+            <option value="default">默认字体（原版排版）</option>
             <option value="serif">衬线 / Georgia</option>
             <option value="sans">黑体 / 雅黑</option>
             <option value="kai">楷体</option>
             <option value="mono">等宽</option>
           </select>
           <select id="textLineSelect" class="dpi-select" title="原文行距">
+            <option value="1.5">行距 1.5</option>
             <option value="1.6">行距 1.6</option>
-            <option value="1.8" selected>行距 1.8</option>
+            <option value="1.75">行距 1.75</option>
+            <option value="1.85" selected>行距 1.85（原版）</option>
             <option value="2">行距 2.0</option>
             <option value="2.2">行距 2.2</option>
           </select>
+          <button class="rt-btn" data-act="text-style-reset" title="恢复原版字号 / 字体 / 行距">恢复默认</button>
+
 
         </div>
         <div id="pagePane" class="reader-body">
@@ -293,10 +302,10 @@
 <script src="/vendor/marked.min.js"></script>
 <script src="/vendor/katex/katex.min.js"></script>
 <script src="/vendor/katex/contrib/auto-render.min.js"></script>
-<script src="/js/core.js?v=20261109g"></script>
-<script src="/js/prompts.js?v=20261109g"></script>
-<script src="/js/api.js?v=20261109g"></script>
-<script src="/js/views.js?v=20261109g"></script>
-<script src="/js/app.js?v=20261109g"></script>
+<script src="/js/core.js?v=20261109h"></script>
+<script src="/js/prompts.js?v=20261109h"></script>
+<script src="/js/api.js?v=20261109h"></script>
+<script src="/js/views.js?v=20261109h"></script>
+<script src="/js/app.js?v=20261109h"></script>
 </body>
 </html>

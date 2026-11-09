@@ -614,9 +614,9 @@ body.generating .chip { opacity: .6; pointer-events: none; }
 
 /* 原文提取：字号 / 字体 / 行距 */
 #textPane .para {
-  font-size: var(--tp-size, 16px);
+  font-size: var(--tp-size, 13.6px);
   font-family: var(--tp-font, inherit);
-  line-height: var(--tp-line, 1.8);
+  line-height: var(--tp-line, 1.85);
 }
 #textPane .para-text { font-size: inherit; }
 
