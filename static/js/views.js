@@ -294,7 +294,7 @@
       return h;
     }
     h += '<table class="gtable"><thead><tr><th style="width:26%">单词 / 术语</th><th style="width:16%">分类</th>' +
-      '<th>解释 / 上下文</th><th style="width:80px">来源</th><th style="width:76px"></th></tr></thead><tbody>';
+      '<th>解释 / 上下文</th><th style="width:80px">来源</th><th style="width:96px"></th></tr></thead><tbody>';
     items.forEach(g => {
       const cat = catOf(g);
       h += '<tr><td class="en">' + global.U.esc(g.en) + '</td>' +
