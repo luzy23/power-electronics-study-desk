@@ -66,6 +66,7 @@
     pack: Object.assign({ scope: 'chapter', parts: PACK_DEFAULT.slice() }, store.get('pack', {})),
     quiz: { q: '', a: '', fb: '' },
     chat: { first: '', msgs: [], display: [] },
+    qa: { first: '', msgs: [], display: [], useText: true, useChapter: false },
     ui: Object.assign({ sideW: 264, readerW: 0, showSide: true, showWork: true, showTop: true, spread: 'single', hlColor: 'yellow', imgScale: 0.5, autoBackup: true },
       store.get('ui', {})),
     busy: false,
@@ -820,7 +821,7 @@
     S.page = (S.pos && S.pos[sid]) || found.section.page || 1;
     if (found.section.isProblems) {
       if (['probSolve', 'probAll', 'probSummary', 'probFeynman'].indexOf(S.workTab) < 0) S.workTab = 'probSolve';
-    } else if (['pre', 'close', 'practice', 'feynman', 'pack'].indexOf(S.workTab) < 0) {
+    } else if (['pre', 'close', 'practice', 'feynman', 'ask', 'pack'].indexOf(S.workTab) < 0) {
       S.workTab = 'pre';
     }
     if (changed && found.section.isProblems) S.prob = { qno: '', question: '' };
@@ -846,10 +847,14 @@
       S.chat = (arch && arch.chat && arch.chat.display && arch.chat.display.length)
         ? { first: arch.chat.first || '', msgs: arch.chat.msgs || [], display: arch.chat.display }
         : { first: '', msgs: [], display: [] };
+      S.qa = (arch && arch.qa && arch.qa.display && arch.qa.display.length)
+        ? { first: arch.qa.first || '', msgs: arch.qa.msgs || [], display: arch.qa.display,
+            useText: arch.qa.useText !== false, useChapter: !!arch.qa.useChapter }
+        : { first: '', msgs: [], display: [], useText: true, useChapter: false };
       S.drafts = Object.assign({ close: '', formula: '', cards: '', ask: '' }, (arch && arch.drafts) || {});
       S.probSolves = (arch && Array.isArray(arch.probSolves)) ? arch.probSolves.slice() : [];
       if (arch) {
-        const hasContent = ARCH_KEYS.some(k => arch[k]) || (arch.chat && arch.chat.display && arch.chat.display.length);
+        const hasContent = ARCH_KEYS.some(k => arch[k]) || (arch.chat && arch.chat.display && arch.chat.display.length) || (arch.qa && arch.qa.display && arch.qa.display.length);
         if (hasContent) toast('已恢复本节上次生成的内容（' + (arch.updatedAt || '') + '）', 2200);
       }
     }
@@ -1491,7 +1496,7 @@
     return h;
   }
 
-  const WORK_TABS_NORMAL = [['pre', '① 预习'], ['close', '② 精读'], ['practice', '③ 练习'], ['feynman', '④ 费曼'], ['pack', '⑤ 学习包']];
+  const WORK_TABS_NORMAL = [['pre', '① 预习'], ['close', '② 精读'], ['practice', '③ 练习'], ['feynman', '④ 费曼'], ['ask', '💬 自由问答'], ['pack', '⑤ 学习包']];
   const WORK_TABS_PROBS = [['probSolve', '① 习题解答'], ['probAll', '② 习题全解'], ['probSummary', '③ 章节提纲'], ['probFeynman', '④ 费曼']];
 
   function renderWork() {
@@ -1506,11 +1511,12 @@
         '" data-wt="' + t[0] + '">' + t[1] + '</button>').join('');
     }
     const map = {
-      pre: renderPre, close: renderClose, practice: renderPractice, feynman: renderFeynman, pack: renderPack,
+      pre: renderPre, close: renderClose, practice: renderPractice, feynman: renderFeynman, ask: renderFreeAsk, pack: renderPack,
       probSolve: renderProbSolve, probAll: renderProbAll, probSummary: renderProbSummary,
       probFeynman: renderProbFeynman
     };
     body.innerHTML = (map[S.workTab] || (probs ? renderProbSolve : renderPre))();
+    if (S.workTab === 'ask') renderQaLog();
     restoreOuts();
   }
 
@@ -1611,6 +1617,121 @@
     }
     return h;
   }
+
+  function renderQaLog() {
+    const out = $('#qaLog');
+    if (!out) return;
+    out.innerHTML = (S.qa.display || []).map(m => {
+      if (m.role === 'user') return '<div class="chat-q"><b>问：</b>' + esc(m.text) + '</div>';
+      return '<div class="chat-assistant md live">' + md(m.text || '') + '</div>';
+    }).join('') || '<div class="tiny muted">还没有对话。针对这一节想到什么，直接问；勾选上面的原文选项可以让回答更准确。</div>';
+    U.renderMath(out);
+  }
+
+  function renderFreeAsk() {
+    if (!S.qa) S.qa = { first: '', msgs: [], display: [], useText: true, useChapter: false };
+    const useText = S.qa.useText !== false;
+    const useChapter = !!S.qa.useChapter;
+    let h = '<div class="card"><div class="card-title">自由问答 <span class="tag">就本节内容随时提问</span></div>' +
+      '<div class="tiny muted" style="margin-bottom:8px">当前：' +
+        esc(S.chapter ? ('第 ' + S.chapter.num + ' 章 / ') : '') + esc(S.section ? S.section.title : '') +
+      '　·　问答按小节保存，切换小节后仍然保留</div>' +
+      '<div class="row" style="gap:16px;flex-wrap:wrap;margin-bottom:8px">' +
+      '<label class="check"><input type="checkbox" id="qaUseText"' + (useText ? ' checked' : '') + '> 附上本节原文（推荐，更准确）</label>' +
+      '<label class="check"><input type="checkbox" id="qaUseChapter"' + (useChapter ? ' checked' : '') + '> 附上整章上下文（较长）</label></div>' +
+      '<div id="qaLog" class="md" style="max-height:380px;overflow:auto;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px"></div>' +
+      '<textarea class="textarea" id="qaInput" style="min-height:80px;margin-top:8px" placeholder="例如：为什么这里假设 CCM？如果进入 DCM，这个公式还成立吗？"></textarea>' +
+      '<div class="toolbar"><button class="btn primary" data-act="run-qa">提问</button>' +
+      '<button class="btn ghost" data-act="clear-qa">清空对话</button>' +
+      '<span class="tiny muted">按 Enter 换行；点「提问」发送</span></div></div>';
+    return h;
+  }
+
+  function saveQaArchive() {
+    if (!S.section || !S.qa) return;
+    saveArchive({
+      qa: {
+        first: S.qa.first || '',
+        msgs: S.qa.msgs || [],
+        display: (S.qa.display || []).map(m => ({ role: m.role, text: m.text })),
+        useText: S.qa.useText !== false,
+        useChapter: !!S.qa.useChapter
+      }
+    });
+  }
+
+  async function runFreeAsk() {
+    const ta = $('#qaInput');
+    const q = ta ? ta.value.trim() : '';
+    if (!q) { toast('先写一个问题'); return; }
+    if (S.busy) { toast('正在生成，请稍候…'); return; }
+    const useText = $('#qaUseText') ? $('#qaUseText').checked : S.qa.useText !== false;
+    const useChapter = $('#qaUseChapter') ? $('#qaUseChapter').checked : !!S.qa.useChapter;
+    S.qa.useText = useText;
+    S.qa.useChapter = useChapter;
+    S.busy = true;
+    document.body.classList.add('generating');
+    ta.value = '';
+    S.qa.display.push({ role: 'user', text: q });
+    renderQaLog();
+    const out = $('#qaLog');
+    if (!out) {
+      S.busy = false;
+      document.body.classList.remove('generating');
+      return;
+    }
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-assistant md live';
+    out.appendChild(bubble);
+    S.qa.display.push({ role: 'assistant', text: '', el: bubble });
+    const ac = new AbortController();
+    S.abort = ac;
+    let timer = null;
+    try {
+      const ctx = Object.assign({}, ctxBase(), { question: q, text: '', chapterText: '' });
+      if (useText && S.section) ctx.text = (await getSectionText(S.section.id)).slice(0, 14000);
+      if (useChapter && S.chapter) ctx.chapterText = (await getChapterContext(S.chapter.id, 30000)) || '';
+      let messages;
+      if (!S.qa.msgs.length) {
+        const built = await PROMPTS.build('freeQa', ctx);
+        S.qa.first = built[1].content;
+        S.qa.msgs = [built[1]];
+        messages = built;
+      } else {
+        const sys = await PROMPTS.raw('system');
+        const history = S.qa.msgs.slice(-12);
+        messages = [{ role: 'system', content: sys }].concat(history, [{ role: 'user', content: q }]);
+        S.qa.msgs.push({ role: 'user', content: q });
+      }
+      let text = '';
+      let lastLen = -1;
+      timer = setInterval(() => {
+        if (text.length !== lastLen) { lastLen = text.length; bubble.innerHTML = md(text); }
+      }, 130);
+      if (API.isDemo()) {
+        const t = await PROMPTS.demo('freeQa', { question: q });
+        await typeOut(t, d => { text += d; }, ac.signal);
+      } else {
+        await API.stream(messages, { signal: ac.signal, onDelta: d => { text += d; } });
+      }
+      clearInterval(timer);
+      if (text.trim()) { bubble.innerHTML = md(text); renderMath(bubble); }
+      else bubble.textContent = '（没有返回内容）';
+      S.qa.msgs.push({ role: 'assistant', content: text });
+      S.qa.display[S.qa.display.length - 1].text = text;
+      saveQaArchive();
+    } catch (err) {
+      clearInterval(timer);
+      bubble.innerHTML = '<div class="err-box">⚠️ ' + esc(err && err.message ? err.message : String(err)) + '</div>';
+    } finally {
+      S.busy = false;
+      S.abort = null;
+      document.body.classList.remove('generating');
+      const body = $('#workBody');
+      if (body) U.scrollToBottom(body);
+    }
+  }
+
 
   function renderClose() {
     const tabs = [['four', '逐句四栏'], ['formula', '公式拆解'], ['cards', '术语卡'], ['ask', '追问']];
@@ -2253,7 +2374,8 @@
     pre: '① 读前预习', preAnswers: '读前问题解答', close: '② 四栏精读', formula: '公式拆解',
     cards: '术语卡', termQuick: '⚡ 查词速查',
     hlTranslate: '高亮 · AI 翻译', hlSummary: '高亮 · AI 总结',
-    ask: '追问', questions: '练习 · 出题', grade: '练习 · 批改',
+    ask: '追问',
+    freeQa: '自由问答', questions: '练习 · 出题', grade: '练习 · 批改',
     feynmanQ: '费曼 · 学生提问', feynmanDiag: '费曼 · 诊断',
     pack: '⑤ 学习包', packNotes: '长文分块笔记（内部用）', mergeNotes: '长文合并（内部用）',
     chapterSummary: '章节知识提纲', probSolve: '习题解答', probAll: '习题全解',
@@ -2609,6 +2731,12 @@
       await generate({ task: 'cards', ctx: { text }, outKey: 'cards' });
     },
     'run-ask': () => runAsk(),
+    'run-qa': () => runFreeAsk(),
+    'clear-qa': () => {
+      S.qa = { first: '', msgs: [], display: [], useText: S.qa ? S.qa.useText : true, useChapter: S.qa ? !!S.qa.useChapter : false };
+      saveQaArchive();
+      renderWork();
+    },
     'clear-chat': () => {
       S.chat = { first: '', msgs: [], display: [] };
       saveArchive({ chat: { first: '', msgs: [], display: [] } });
@@ -3126,6 +3254,10 @@
           mdTxt += '### 追问\n\n';
           n.a.chat.display.forEach(m => { mdTxt += (m.role === 'user' ? '**问：** ' : '') + m.text + '\n\n'; });
         }
+        if (n.a.qa && n.a.qa.display && n.a.qa.display.length) {
+          mdTxt += '### 自由问答\n\n';
+          n.a.qa.display.forEach(m => { mdTxt += (m.role === 'user' ? '**问：** ' : '') + m.text + '\n\n'; });
+        }
       });
       downloadFile('学习存档-' + today() + '.md', mdTxt, 'text/markdown');
     },
@@ -3281,6 +3413,8 @@
       if (e.target.id === 'revQuizType') { revState().cfg.quizType = e.target.value; showView('review'); return; }
       if (e.target.matches('.cat-select[data-id]')) { ACTIONS['glossary-cat'](e.target); return; }
       if (e.target.id === 'gSearch') { S.wbQuery = (e.target.value || '').trim(); showView('glossary'); return; }
+      if (e.target.id === 'qaUseText') { S.qa.useText = !!e.target.checked; saveQaArchive(); return; }
+      if (e.target.id === 'qaUseChapter') { S.qa.useChapter = !!e.target.checked; saveQaArchive(); return; }
       if (e.target.id === 'promptTaskSel') { loadPromptTask(e.target.value); return; }
       if (e.target.id === 'cfgAutoBackup') {
         S.ui.autoBackup = !!e.target.checked;

@@ -636,3 +636,6 @@ body.generating .chip { opacity: .6; pointer-events: none; }
 #textSizeSelect, #textFontSelect, #textLineSelect { flex-shrink: 0; }
 
 .gtable th:last-child, .gtable td:last-child { white-space: nowrap; }
+
+#qaLog .chat-q { margin-bottom: 8px; }
+#qaLog .chat-assistant { margin-bottom: 10px; }
