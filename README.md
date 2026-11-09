@@ -7,9 +7,11 @@
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
 [![No build](https://img.shields.io/badge/frontend-vanilla%20JS-brightgreen.svg)](static/js)
 
+> 📸 下面截图为「演示模式」内置示例；配置 API Key 后，内容会基于你的教材原文实时生成。
+
 > ⚠️ **版权声明**：本项目只包含工具代码，**不包含、也不分发**教材 PDF 或提取后的教材文本（data/ 已在 .gitignore 中）。你需要自行准备合法获得的 PDF 副本；本工具仅用于个人学习。README 中的截图只用于展示软件界面，其中出现的少量教材片段仅作说明用途。本项目与 Springer / 作者无关联，如权利人认为有不妥请联系删除。
 
-![自定义学习计划：按日期 + 章节自动分周，可加自定义任务](docs/screenshots/custom-plan-auto.png)
+![提取原文：图表公式按原页面位置内嵌，字号 / 字体 / 行距可调](docs/screenshots/feature-reader.png)
 
 ---
 
@@ -32,6 +34,45 @@
 | 自定义提示词 | 设置里可覆盖任意任务的提示词，随时恢复默认 |
 | 自动备份 | 修改后自动写 `backups/*.json`（保留 30 份），启动时自动补备份 |
 | 构建校验 | `tools/verify_book.py` 检查数据结构、段落/图片、习题切分，构建后自动运行 |
+
+
+## 📸 功能展示
+
+### 1. 提取原文
+左侧看原版 PDF 页面，右侧「提取原文」把正文、图表、公式按原页面位置重新排好；图表和公式不是文字碎片，而是按坐标裁出的高清图。支持**字号 / 字体 / 行距**自定义，默认保持原版 13.6px 排版。
+
+![提取原文](docs/screenshots/feature-reader.png)
+
+### 2. 划词翻译（查词）
+在原文里选中一个单词或短语 → 点「⚡ 查词」，结合上下文给出中文释义与搭配；查询结果**自动收进单词本并初步分类**（专业术语 / 普通词 / 短语 / 缩写），也可以一键升级成完整术语卡。
+
+![划词翻译](docs/screenshots/feature-lookup.png)
+
+### 3. 读前预习
+每节生成 5 个「零基础」问题，每题都标了去原文哪里验证；先猜后读，再逐题对答案，并自动联动之前学过的小节。
+
+![读前预习](docs/screenshots/feature-pre.png)
+
+### 4. 费曼法
+合上书讲一遍 → AI 扮演初学者追问 → 输出诊断报告：哪里讲对、哪里逻辑跳跃、概念错误、评分和下一步补什么。
+
+![费曼诊断](docs/screenshots/feature-feynman.png)
+
+### 5. 学习包
+一句话概括 / 知识地图 / 提纲 / 核心结论 / 推导骨架 / 自测 / 仿真 / 易错 / 术语 / 工程连接，自选生成；超长章节自动「分块提炼 → 合并」，不会因为输入截断而残缺。
+
+![学习包](docs/screenshots/feature-pack.png)
+
+### 6. 习题
+每章末 Problems 独立入口：看原文 + **习题解答（按题号逐题保存，不覆盖旧题）/ 习题全解 / 章节提纲 / 习题费曼**。
+
+![习题解答](docs/screenshots/feature-problems.png)
+
+### 7. 单词本
+查词自动收录、按四类自动分类；历史「查词」记录自动迁移；支持搜索、筛选、改分类、直接编辑释义、导出 Anki CSV / Markdown。单词本 → 「开始复习」还可以进入**单词卡复习**：英→中 / 中→英选择 / 中→英拼写，按遗忘曲线安排，支持自评、错词回炉和连续打卡。
+
+![单词本](docs/screenshots/feature-wordbook.png)
+
 
 更多截图见 [`docs/screenshots/`](docs/screenshots)。
 
