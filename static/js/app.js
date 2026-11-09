@@ -231,10 +231,11 @@
   }
   function revState() {
     if (!S.rev) {
-      S.rev = { phase: 'setup', cfg: { cat: 'all', chapter: 'all', mode: 'due', limit: 20 },
-        queue: [], idx: 0, answered: false, sel: -1, correct: 0, wrong: [] };
+      S.rev = { phase: 'setup', cfg: { cat: 'all', chapter: 'all', mode: 'due', quizType: 'en2zh', limit: 20 },
+        queue: [], idx: 0, answered: false, sel: -1, correct: 0, wrong: [], input: '', lastOk: null };
     }
-    if (!S.rev.cfg) S.rev.cfg = { cat: 'all', chapter: 'all', mode: 'due', limit: 20 };
+    if (!S.rev.cfg) S.rev.cfg = {};
+    if (!S.rev.cfg.quizType) S.rev.cfg.quizType = 'en2zh';
     return S.rev;
   }
   function revFiltered(cfg) {
@@ -249,7 +250,7 @@
       }
       if (cfg.mode === 'weak') {
         const s = g.srs;
-        return !s || s.reps === 0 || s.lapses > 0;
+        return !s || s.reps === 0 || s.lapses > 0 || s.lastWrong;
       }
       return true;
     });
@@ -261,98 +262,125 @@
       s.reps = (s.reps || 0) + 1;
       s.interval = s.reps <= 1 ? 1 : (s.reps === 2 ? 3 : Math.max(3, Math.round((s.interval || 1) * (s.ease || 2.5))));
       s.ease = Math.min(2.9, (s.ease || 2.5) + 0.1);
+      if (s.lastWrong) delete s.lastWrong;
     } else {
       s.lapses = (s.lapses || 0) + 1;
       s.reps = 0;
       s.interval = 1;
       s.ease = Math.max(1.3, (s.ease || 2.5) - 0.2);
+      s.lastWrong = wbToday();
     }
     s.due = wbAddDays(wbToday(), s.interval || 1);
   }
-  function revBuildQueue() {
+  function wbPickDecoys(g, field, n) {
+    const all = (S.glossary || []).filter(x => x.id !== g.id && wbNoteShort(x));
+    const textOf = x => (field === 'term' ? String(x.en || '').trim() : wbOptionText(x));
+    const target = textOf(g);
+    const pool = all.map(x => {
+      const t = textOf(x);
+      let score = 0;
+      if (wbEntryCat(x) !== wbEntryCat(g)) score += 100;
+      if (wbEntryChapter(x) !== wbEntryChapter(g)) score += 20;
+      score += Math.abs(t.length - target.length) / 25;
+      return { t, score };
+    }).filter(o => o.t && o.t !== target);
+    const head = pool.slice().sort((a, b) => a.score - b.score).slice(0, Math.max(12, n * 4));
+    const seen = new Set([target]);
+    const out = [];
+    wbShuffle(head).forEach(o => { if (!seen.has(o.t) && out.length < n) { seen.add(o.t); out.push(o.t); } });
+    if (out.length < n) {
+      wbShuffle(pool).forEach(o => { if (!seen.has(o.t) && out.length < n) { seen.add(o.t); out.push(o.t); } });
+    }
+    return out;
+  }
+  function wbSpellNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  function revQueueFrom(list, cfg) {
     const R = revState();
-    const cfg = R.cfg || { cat: 'all', chapter: 'all', mode: 'due', limit: 20 };
-    const cands = revFiltered(cfg);
-    if (!cands.length) { toast('这个筛选下没有可复习的单词'); return; }
-    const all = (S.glossary || []).filter(g => wbNoteShort(g));
-    const limit = Math.max(1, parseInt(cfg.limit, 10) || 20);
-    const picked = wbShuffle(cands).slice(0, limit);
     const qs = [];
-    picked.forEach(g => {
-      const correct = wbOptionText(g);
-      let decoys = wbShuffle(all.filter(x => x.id !== g.id && wbEntryCat(x) === wbEntryCat(g) &&
-        wbNoteShort(x) && wbOptionText(x) !== correct)).map(wbOptionText);
-      if (decoys.length < 3) {
-        decoys = decoys.concat(wbShuffle(all.filter(x => x.id !== g.id && wbNoteShort(x) && wbNoteShort(x) !== correct))
-          .map(wbOptionText));
+    list.forEach(g => {
+      const type = cfg.quizType || 'en2zh';
+      if (type === 'spell') {
+        qs.push({ entryId: g.id, type: 'spell',
+          prompt: wbOptionText(g), term: g.en, note: wbOptionText(g),
+          cat: wbEntryCat(g), src: g.src || '', answerText: String(g.en || '').trim() });
+        return;
       }
-      decoys = [...new Set(decoys)].slice(0, 3);
+      if (type === 'zh2en') {
+        const correct = String(g.en || '').trim();
+        const decoys = wbPickDecoys(g, 'term', 3);
+        if (decoys.length < 3) return;
+        const options = wbShuffle([correct].concat(decoys));
+        qs.push({ entryId: g.id, type: 'choice', prompt: wbOptionText(g), term: g.en, note: wbOptionText(g),
+          cat: wbEntryCat(g), src: g.src || '', options, answer: options.indexOf(correct), answerText: correct });
+        return;
+      }
+      const correct = wbOptionText(g);
+      const decoys = wbPickDecoys(g, 'note', 3);
       if (decoys.length < 3) return;
       const options = wbShuffle([correct].concat(decoys));
-      qs.push({ entryId: g.id, term: g.en, note: correct, cat: wbEntryCat(g), src: g.src || '',
-        options, answer: options.indexOf(correct) });
+      qs.push({ entryId: g.id, type: 'choice', prompt: String(g.en || ''), term: g.en, note: correct,
+        cat: wbEntryCat(g), src: g.src || '', options, answer: options.indexOf(correct), answerText: correct });
     });
-    if (!qs.length) { toast('至少需要 4 条带释义的单词才能出选择题'); return; }
-    R.queue = qs;
-    R.idx = 0; R.answered = false; R.sel = -1; R.correct = 0; R.wrong = []; R.phase = 'quiz';
+    if (!qs.length) { toast('这个筛选下可用单词不足，无法出题'); return false; }
+    R.queue = qs; R.idx = 0; R.answered = false; R.sel = -1; R.correct = 0; R.wrong = []; R.input = ''; R.phase = 'quiz';
+    showView('review');
+    return true;
+  }
+  function revBuildQueue() {
+    const R = revState();
+    const cfg = R.cfg || { cat: 'all', chapter: 'all', mode: 'due', quizType: 'en2zh', limit: 20 };
+    const cands = revFiltered(cfg);
+    if (!cands.length) { toast('这个筛选下没有可复习的单词'); return; }
+    const limit = Math.max(1, parseInt(cfg.limit, 10) || 20);
+    const wrongFirst = cands.filter(g => g.srs && g.srs.lastWrong);
+    const rest = cands.filter(g => !(g.srs && g.srs.lastWrong));
+    const picked = wbShuffle(wrongFirst).concat(wbShuffle(rest)).slice(0, limit);
+    revQueueFrom(picked, cfg);
+  }
+  function revRetryWrong() {
+    const R = revState();
+    const ids = new Set((R.wrong || []).map(w => w.entryId));
+    const list = (S.glossary || []).filter(g => ids.has(g.id) && wbNoteShort(g));
+    if (!list.length) { toast('本轮没有错词'); return; }
+    revQueueFrom(wbShuffle(list), R.cfg);
+    toast('只练本轮错词：' + list.length + ' 张');
+  }
+  function revFinish(ok, chosen) {
+    const R = revState();
+    const q = R.queue[R.idx];
+    if (!q) return;
+    R.answered = true;
+    R.lastOk = ok;
+    const g = (S.glossary || []).find(x => x.id === q.entryId);
+    if (g) { wbSchedule(g, ok); saveGlossary(); updateCounts(); }
+    if (ok) R.correct++;
+    else R.wrong.push({ entryId: q.entryId, term: q.term, type: q.type, correct: q.answerText,
+      chosen: chosen || '', src: q.src || '' });
     showView('review');
   }
   function revAnswer(i) {
     const R = revState();
     const q = R.queue[R.idx];
-    if (!q || R.answered || i < 0 || i >= q.options.length) return;
-    R.sel = i; R.answered = true;
-    const ok = i === q.answer;
-    const g = (S.glossary || []).find(x => x.id === q.entryId);
-    if (g) { wbSchedule(g, ok); saveGlossary(); updateCounts(); }
-    if (ok) R.correct++;
-    else R.wrong.push({ term: q.term, correct: q.note, chosen: q.options[i], src: q.src });
-    showView('review');
+    if (!q || q.type !== 'choice' || R.answered || i < 0 || i >= q.options.length) return;
+    R.sel = i;
+    revFinish(i === q.answer, q.options[i]);
+  }
+  function revSubmitSpell() {
+    const R = revState();
+    const q = R.queue[R.idx];
+    if (!q || q.type !== 'spell' || R.answered) return;
+    const input = (($('#revInput') || {}).value) || '';
+    if (!input.trim()) { toast('先输入答案'); return; }
+    R.input = input;
+    revFinish(wbSpellNorm(input) === wbSpellNorm(q.answerText), input.trim());
   }
   function revNext() {
     const R = revState();
     if (!R.answered) return;
     R.idx++;
     if (R.idx >= R.queue.length) R.phase = 'done';
-    else { R.answered = false; R.sel = -1; }
+    else { R.answered = false; R.sel = -1; R.input = ''; }
     showView('review');
-  }
-  async function revAIExplain() {
-    if (API.isDemo()) return toast('演示模式不调用 AI');
-    const R = revState(), q = R.queue[R.idx];
-    if (!q || !R.answered) return;
-    const box = $('#revAi');
-    if (!box) return;
-    box.textContent = '生成中…';
-    try {
-      const msgs = await PROMPTS.build('reviewExplain', {
-        term: q.term, correct: q.note, chosen: q.options[R.sel] || '（未选择）', source: q.src || ''
-      });
-      let text = '';
-      await API.stream(msgs, { maxTokens: 320, temperature: 0.3, onDelta: d => { text += d; box.textContent = text; } });
-      if (text.trim()) U.renderMarkdown(box, text); else box.textContent = '（没有返回内容）';
-    } catch (e) { box.textContent = '⚠️ ' + (e && e.message ? e.message : e); }
-  }
-  async function revAIDefs() {
-    if (API.isDemo()) return toast('演示模式不调用 AI');
-    const R = revState(), q = R.queue[R.idx];
-    if (!q) return;
-    if (R.answered) return toast('已经作答，不能更换选项');
-    toast('AI 正在生成干扰项…');
-    try {
-      const msgs = await PROMPTS.build('reviewDistractors', { term: q.term, correct: q.note, source: q.src || '' });
-      let text = '';
-      await API.stream(msgs, { maxTokens: 300, temperature: 0.8, onDelta: d => { text += d; } });
-      const lines = text.split(/\n+/).map(s => s.replace(/^[-*\d.、\s]+/, '').trim())
-        .filter(s => s && s !== q.note && s.length >= 2).slice(0, 3);
-      if (lines.length < 3) { toast('AI 返回的干扰项不足，保留原选项'); return; }
-      const options = wbShuffle([q.note].concat(lines));
-      q.options = options;
-      q.answer = options.indexOf(q.note);
-      R.sel = -1; R.answered = false;
-      showView('review');
-      toast('已换成 AI 干扰项');
-    } catch (e) { toast('AI 生成失败：' + (e && e.message ? e.message : e)); }
   }
 
   /** 查词结果自动同步到单词本（已有则补全字段，不重复） */
@@ -2163,7 +2191,7 @@
     system: '全局 system 提示（角色 / 风格 / 公式规范）',
     pre: '① 读前预习', preAnswers: '读前问题解答', close: '② 四栏精读', formula: '公式拆解',
     cards: '术语卡', termQuick: '⚡ 查词速查',
-    reviewExplain: '单词复习 · AI 讲解', reviewDistractors: '单词复习 · AI 干扰项', hlTranslate: '高亮 · AI 翻译', hlSummary: '高亮 · AI 总结',
+    hlTranslate: '高亮 · AI 翻译', hlSummary: '高亮 · AI 总结',
     ask: '追问', questions: '练习 · 出题', grade: '练习 · 批改',
     feynmanQ: '费曼 · 学生提问', feynmanDiag: '费曼 · 诊断',
     pack: '⑤ 学习包', packNotes: '长文分块笔记（内部用）', mergeNotes: '长文合并（内部用）',
@@ -2923,10 +2951,10 @@
     'review-back': () => showView('glossary'),
     'review-start': () => revBuildQueue(),
     'review-answer': (el) => revAnswer(parseInt(el.dataset.i, 10)),
+    'review-spell-submit': () => revSubmitSpell(),
     'review-next': () => revNext(),
+    'review-retry-wrong': () => revRetryWrong(),
     'review-restart': () => { if (S.rev) { S.rev.phase = 'setup'; } showView('review'); },
-    'review-ai-explain': () => revAIExplain(),
-    'review-ai-defs': () => revAIDefs(),
 
     'mistakes-del': (el) => { S.mistakes.splice(Number(el.dataset.i), 1); saveMistakes(); updateCounts(); showView('mistakes'); },
     'mistakes-export': () => {
@@ -3168,6 +3196,7 @@
       if (e.target.id === 'revChapter') { revState().cfg.chapter = e.target.value; showView('review'); return; }
       if (e.target.id === 'revMode') { revState().cfg.mode = e.target.value; showView('review'); return; }
       if (e.target.id === 'revLimit') { revState().cfg.limit = parseInt(e.target.value, 10) || 20; showView('review'); return; }
+      if (e.target.id === 'revQuizType') { revState().cfg.quizType = e.target.value; showView('review'); return; }
       if (e.target.matches('.cat-select[data-id]')) { ACTIONS['glossary-cat'](e.target); return; }
       if (e.target.id === 'gSearch') { S.wbQuery = (e.target.value || '').trim(); showView('glossary'); return; }
       if (e.target.id === 'promptTaskSel') { loadPromptTask(e.target.value); return; }
@@ -3239,9 +3268,24 @@
 
     document.addEventListener('keydown', (e) => {
       if (!S.rev || S.rev.phase !== 'quiz') return;
-      if (e.target && e.target.matches && e.target.matches('input,textarea,select')) return;
-      if (/^[1-4]$/.test(e.key)) { ACTIONS['review-answer']({ dataset: { i: String(Number(e.key) - 1) } }); }
-      else if (e.key === 'Enter') { ACTIONS['review-next'](); }
+      if (e.target && e.target.matches && e.target.matches('textarea,select')) return;
+      if (e.target && e.target.id === 'revInput') {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (S.rev.answered) ACTIONS['review-next'](); else ACTIONS['review-spell-submit']();
+        }
+        return;
+      }
+      if (S.rev.answered) {
+        if (e.key === 'Enter') ACTIONS['review-next']();
+        return;
+      }
+      const q = S.rev.queue && S.rev.queue[S.rev.idx];
+      if (q && q.type === 'choice' && /^[1-4]$/.test(e.key)) {
+        ACTIONS['review-answer']({ dataset: { i: String(Number(e.key) - 1) } });
+      } else if (q && q.type === 'spell' && e.key === 'Enter') {
+        ACTIONS['review-spell-submit']();
+      }
     });
     document.addEventListener('fullscreenchange', syncFullscreenBtn);
 
