@@ -2359,6 +2359,8 @@
     $('#cfgDemo').checked = !!c.demo;
     const ab = $('#cfgAutoBackup');
     if (ab) ab.checked = S.ui.autoBackup !== false;
+    const th = $('#cfgTheme');
+    if (th) th.value = S.ui.theme || 'light';
     refreshBackupInfo();
     $('#cfgProvider').value = /deepseek/i.test(c.baseUrl) ? 'deepseek' : (/openai\.com/i.test(c.baseUrl) ? 'openai' : 'custom');
     $('#testResult').textContent = '';
@@ -2490,6 +2492,8 @@
       temperature: parseFloat($('#cfgTemp').value) || 0.4,
       demo: $('#cfgDemo').checked
     };
+    const themeSel = $('#cfgTheme');
+    if (themeSel) { S.ui.theme = themeSel.value || 'light'; saveUi(); applyTheme(); }
     API.saveCfg(cfg);
     updateStatusPill();
     toast('设置已保存');
@@ -2540,7 +2544,7 @@
       archive: S.archive, highlights: S.highlights, done: S.done,
       planCfg: S.planCfg,
       prompts: S.customPrompts || {},
-      ui: { autoBackup: S.ui.autoBackup !== false },
+      ui: { autoBackup: S.ui.autoBackup !== false, theme: S.ui.theme || 'light' },
       reviewDays: store.get('reviewDays', [])
     };
   }
@@ -2568,6 +2572,7 @@
         if (d.done) { S.done = d.done; saveDone(); }
         if (d.prompts) { S.customPrompts = d.prompts; savePrompts(); }
         if (d.ui && d.ui.autoBackup !== undefined) { S.ui.autoBackup = !!d.ui.autoBackup; saveUi(); }
+        if (d.ui && d.ui.theme) { S.ui.theme = d.ui.theme; saveUi(); applyTheme(); }
         if (d.reviewDays) store.set('reviewDays', d.reviewDays);
         normalizeGlossary();
         migrateLookupHistory(true);
@@ -3366,6 +3371,7 @@
       const viewBtn = e.target.closest('[data-view]');
       if (viewBtn) { showView(viewBtn.dataset.view); return; }
       if (e.target.closest('#btnSettings')) { openSettings(); return; }
+      if (e.target.closest('#btnTheme')) { cycleTheme(); return; }
       if (e.target.closest('#btnBackupNow')) {
         doAutoBackup('manual').then(r => { if (r) toast('已备份到 backups/ 目录'); refreshBackupInfo(); });
         return;
@@ -3415,6 +3421,7 @@
       if (e.target.id === 'gSearch') { S.wbQuery = (e.target.value || '').trim(); showView('glossary'); return; }
       if (e.target.id === 'qaUseText') { S.qa.useText = !!e.target.checked; saveQaArchive(); return; }
       if (e.target.id === 'qaUseChapter') { S.qa.useChapter = !!e.target.checked; saveQaArchive(); return; }
+      if (e.target.id === 'cfgTheme') { S.ui.theme = e.target.value || 'light'; saveUi(); applyTheme(); return; }
       if (e.target.id === 'promptTaskSel') { loadPromptTask(e.target.value); return; }
       if (e.target.id === 'cfgAutoBackup') {
         S.ui.autoBackup = !!e.target.checked;
@@ -3575,6 +3582,29 @@
     if (tl) tl.value = String(line);
   }
 
+
+  function applyTheme() {
+    const order = ['light', 'eye', 'dark'];
+    const theme = order.indexOf(S.ui.theme) >= 0 ? S.ui.theme : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    const btn = $('#btnTheme');
+    if (btn) {
+      btn.textContent = theme === 'dark' ? '🌙 夜间' : (theme === 'eye' ? '🌤 护眼' : '☀️ 浅色');
+      btn.title = '当前：' + (theme === 'dark' ? '夜间' : (theme === 'eye' ? '护眼' : '浅色')) + '；点击切换';
+    }
+    const sel = $('#cfgTheme');
+    if (sel) sel.value = theme;
+  }
+
+  function cycleTheme() {
+    const order = ['light', 'eye', 'dark'];
+    const cur = order.indexOf(S.ui.theme) >= 0 ? order.indexOf(S.ui.theme) : 0;
+    S.ui.theme = order[(cur + 1) % 3];
+    saveUi();
+    applyTheme();
+    toast('已切换为' + (S.ui.theme === 'dark' ? '夜间' : (S.ui.theme === 'eye' ? '护眼' : '浅色')) + '模式');
+  }
+
   function applyUi() {
     const ui = S.ui;
     const side = $('#sidebar');
@@ -3596,6 +3626,7 @@
     const ims = $('#imgScaleSelect');
     if (ims) ims.value = String(ui.imgScale || 0.5);
     applyTextStyle();
+    applyTheme();
   }
 
   function toggleTop() {
