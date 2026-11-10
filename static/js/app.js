@@ -624,6 +624,26 @@
     };
   }
 
+
+  // 读前预习需要覆盖整节。旧版硬编码 slice(0,9000)，长节只能看到开头；
+  // 当前书最长约 5 万字符，直接完整送入（DeepSeek 上下文足够）。
+  // 如果未来遇到更长的节，按整节均匀抽样，保证开头/中段/结尾都有覆盖。
+  const PRE_TEXT_MAX = 60000;
+  function sectionTextForPre(text) {
+    text = text || '';
+    if (text.length <= PRE_TEXT_MAX) return text;
+    const parts = 12;
+    const per = Math.floor(PRE_TEXT_MAX / parts);
+    const step = text.length / parts;
+    const chunks = [];
+    for (let i = 0; i < parts; i++) {
+      const start = Math.floor(i * step);
+      const end = Math.min(text.length, Math.floor((i + 1) * step), start + per);
+      chunks.push(text.slice(start, end));
+    }
+    return chunks.join('\n\n[…]（长节已按全文均匀采样）\n\n');
+  }
+
   async function getSectionText(sid) {
     if (!sid) return '';
     if (S.sectionTexts[sid] != null) return S.sectionTexts[sid];
@@ -975,9 +995,9 @@
           const isTable = it.kind === 'table';
           const qs = 'page=' + it.page + '&x0=' + it.x0 + '&y0=' + it.y0 +
             '&x1=' + it.x1 + '&y1=' + it.y1;
-          // 普通图表按"原书点宽 × 2.36（170dpi）× 缩放"显示；表格默认铺满阅读区，保证字不糊
-          const wpx = (!isTable && it.w) ? Math.round(it.w * (170 / 72) * imgScale) : null;
-          const sizeAttr = isTable ? ' style="width:100%"' : (wpx ? ' style="width:' + wpx + 'px" data-w="' + it.w + '"' : '');
+          // 表格和普通图一致：原书点宽 × 2.36（170dpi）× 当前缩放（默认 50%）
+          const wpx = it.w ? Math.round(it.w * (170 / 72) * imgScale) : null;
+          const sizeAttr = wpx ? ' style="width:' + wpx + 'px" data-w="' + it.w + '"' : '';
           html += '<figure class="fig-block' + (isTable ? ' table-block' : '') + '"><a href="/api/band?' + qs + '&dpi=220" target="_blank" rel="noopener" title="点击查看大图">' +
             '<img loading="lazy"' + sizeAttr +
             ' src="/api/band?' + qs + '&dpi=170" alt="第 ' + it.page + ' 页的' + (isTable ? '表格' : '图表/公式') + '"></a>' +
@@ -2683,7 +2703,7 @@
     'run-pre': async () => {
       await withSection(async () => {
         const useText = $('#preUseText') && $('#preUseText').checked;
-        const text = useText ? (await getSectionText(S.section.id)).slice(0, 9000) : '';
+        const text = useText ? sectionTextForPre(await getSectionText(S.section.id)) : '';
         delete S.outs.preAnswers;   // 题目重出，旧解答作废
         saveArchive({ preAnswers: '' });
         await generate({
@@ -2697,7 +2717,7 @@
     'run-pre-answers': async () => {
       if (!S.outs.pre) { toast('先生成读前问题'); return; }
       await withSection(async () => {
-        const text = (await getSectionText(S.section.id)).slice(0, 9000);
+        const text = sectionTextForPre(await getSectionText(S.section.id));
         await generate({
           task: 'preAnswers',
           ctx: Object.assign(ctxBase(), { questions: S.outs.pre, text }),

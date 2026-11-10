@@ -765,4 +765,4 @@ html[data-theme=dark] .modal-head h2 { color: var(--ink); }
 
 /* 表格图：像图/公式一样展示，但默认铺满宽度，避免小字看不清 */
 .fig-block.table-block { margin: 14px 0 16px; }
-.fig-block.table-block img { width: 100%; max-width: 100%; }
+.fig-block.table-block img { max-width: 100%; }
