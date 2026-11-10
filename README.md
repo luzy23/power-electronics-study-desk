@@ -80,60 +80,235 @@
 
 ---
 
-## 🚀 快速开始
+## 🚀 下载与安装（从零开始）
 
-### 1. 环境
+> ⚠️ 这个项目**不是纯静态网页**。只双击 `static/index.html` 会报 `Failed to fetch`：页面能用，但所有功能都要通过本机的 Python 服务访问 `/api/*`。必须按下面的步骤启动本地服务。
 
-- Python 3.9+
-- 任意 OpenAI 兼容的 API（DeepSeek / OpenAI / 本地 Ollama / vLLM / 硅基流动…）
-- Windows 可直接双击 `启动学习台.bat`；macOS / Linux 用 `./start.sh`
+### 0. 下载项目
 
-```bash
-python -m pip install -r requirements.txt
+**方式 A：直接下载 ZIP（推荐给不熟悉 Git 的人）**
+
+1. 打开 GitHub 仓库页面；
+2. 点绿色的 **Code → Download ZIP**；
+3. 解压到一个**路径简单**的目录，例如：
+
+```
+D:\study\power-electronics-study-desk\
 ```
 
-### 2. 准备教材 PDF（必须自备）
+不建议放在 `C:\Program Files`、OneDrive 同步目录或路径里带很多特殊符号的位置。
 
-本项目**不附带** Erickson 教材。把你自己合法获得的 PDF 放到项目根目录并命名为 `book.pdf`：
+**方式 B：用 Git 克隆**
+
+```bash
+git clone https://github.com/luzy23/power-electronics-study-desk.git
+cd power-electronics-study-desk
+```
+
+> GitHub 上只有工具代码，**不包含教材 PDF、`data/`、API Key**。PDF 需要你自己准备（见第 3 步）。
+
+### 1. 安装 Python 3.9+
+
+**Windows**
+
+1. 打开 <https://www.python.org/downloads/>；
+2. 下载 Python 3.10–3.12 的 Windows 安装包；
+3. 安装时务必勾选 **Add Python to PATH**；
+4. 打开 PowerShell 或 CMD，检查：
+
+```powershell
+python --version
+```
+
+如果提示找不到 `python`，改用：
+
+```powershell
+py --version
+```
+
+后面所有 `python` 命令都可以换成 `py -3`。
+
+**macOS**
+
+```bash
+python3 --version
+```
+
+没有的话从 <https://www.python.org/downloads/macos/> 安装，或：
+
+```bash
+brew install python
+```
+
+**Linux**
+
+```bash
+python3 --version
+sudo apt install python3 python3-pip   # Debian / Ubuntu 示例
+```
+
+> 如果 Windows 输入 `python` 却弹出 Microsoft Store，说明 PATH 没配好，或“应用执行别名”指向了商店。用 `py -3`，或在“管理应用执行别名”里关闭 python 的商店别名。
+
+### 2. 安装依赖
+
+先进入项目目录：
+
+```powershell
+cd D:\study\power-electronics-study-desk
+```
+
+Windows：
+
+```powershell
+python -m pip install -r requirements.txt
+# 或
+py -3 -m pip install -r requirements.txt
+```
+
+macOS / Linux：
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+如果下载很慢，可以加国内镜像：
+
+```bash
+python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+项目依赖只有 **PyMuPDF**，首次安装通常几十秒。
+
+### 3. 准备教材 PDF（必须自备）
+
+本项目**不附带、也不分发** Erickson 教材。你需要自己准备合法获得的 PDF。
+
+**方式 A：放到项目根目录，命名为 `book.pdf`**
 
 ```
 power-electronics-study-desk/
 ├─ book.pdf              ← 你的 PDF（已在 .gitignore 中）
 ├─ config.example.json
+├─ requirements.txt
 └─ ...
 ```
 
-或者：
+**方式 B：用配置文件指定路径**
+
+Windows：
+
+```powershell
+copy config.example.json config.json
+notepad config.json
+```
+
+macOS / Linux：
 
 ```bash
 cp config.example.json config.json
-# 编辑 config.json，把 "pdf" 改成你的 PDF 路径（绝对路径或相对本目录）
+nano config.json
 ```
 
-也可以设置环境变量：`PE_PDF=/path/to/book.pdf`。
+把 `"pdf"` 改成你的 PDF 路径，例如：
 
-### 3. 构建教材数据（首次 1–3 分钟）
+```json
+{
+  "pdf": "D:/study/books/Fundamentals of Power Electronics 3rd Edition.pdf"
+}
+```
+
+或者设置环境变量：
+
+```powershell
+$env:PE_PDF = "D:\study\books\book.pdf"    # Windows PowerShell
+```
+
+```bash
+export PE_PDF=/path/to/book.pdf             # macOS / Linux
+```
+
+### 4. 首次构建教材数据（1–3 分钟）
+
+**最简单：直接双击 `启动学习台.bat`（Windows）**
+
+第一次运行如果发现没有 `data/book.json`，脚本会自动执行构建，并提示进度。构建完成后会自动启动服务。
+
+也可以手动构建：
 
 ```bash
 python tools/build_book.py
 ```
 
-构建结束会自动运行数据校验，输出 `PASS/WARN`。生成的 `data/` 与 `_cache/` 不会进 Git。
+构建结束会自动运行数据校验，输出 `PASS` / `WARN`。生成的 `data/`、`_cache/`、`backups/` 都不会进 Git。
 
-### 4. 启动
+> 构建时间取决于 PDF 大小和电脑性能，通常 1–3 分钟；大文件可能更久，请等它跑完，不要关窗口。
+
+### 5. 启动本地服务
+
+**Windows（推荐）**
+
+双击：
+
+```
+启动学习台.bat
+```
+
+保持黑色命令行窗口打开，浏览器会自动打开：
+
+```
+http://127.0.0.1:8765/
+```
+
+如果 8765 被占用，脚本会自动换一个端口；**以窗口里打印的地址为准**。
+
+**macOS / Linux**
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+**手动启动（任何系统）**
 
 ```bash
 python server.py
-# 或 Windows: 启动学习台.bat
 ```
 
-打开 `http://127.0.0.1:8765/`，右上角「设置」里填写 API（Key 只存在本机浏览器，通过本地服务转发）：
+不想自动开浏览器：
 
-建议使用deepseek-flash官方API，进入https://platform.deepseek.com
-注册，充值后获取API Key（可先充值5元左右尝试效果），本学习台高强度学习一天花费不足1元。
+```bash
+python server.py --no-browser
+```
 
+> 不要直接双击 `static/index.html`。它没有后端，会报 `Failed to fetch`。
+>
+> 也不要把 `127.0.0.1` 的地址发给别人：这是“本机回环地址”，别人的电脑访问不到。别人要用，就在他自己的电脑上按本文档跑一份。
 
-没配 Key 可以勾选「演示模式」先预览界面。
+### 6. 配置 API
+
+打开页面后，右上角 **设置**：
+
+| 配置项 | 示例 |
+| --- | --- |
+| API 服务商 | DeepSeek |
+| Base URL | `https://api.deepseek.com/v1` |
+| API Key | 你的 Key（只保存在本机浏览器） |
+| 模型 | `deepseek-chat` / `deepseek-flash` |
+
+DeepSeek 控制台：<https://platform.deepseek.com>  
+也可以先用 **演示模式** 预览界面，不填 Key。
+
+### 7. 安装常见问题
+
+| 现象 | 原因 | 解决 |
+| --- | --- | --- |
+| `Failed to fetch` | 直接打开了 `static/index.html`，或本地服务没启动 | 用 `启动学习台.bat` / `python server.py`，打开 `http://127.0.0.1:8765/` |
+| 提示找不到 `python` | PATH 没配好 | Windows 用 `py -3`，或重新安装并勾选 Add to PATH |
+| `No module named pymupdf` | 依赖没装 | `python -m pip install -r requirements.txt` |
+| 提示没有教材 PDF | 项目不附带 PDF | 放 `book.pdf` 或配置 `config.json` |
+| 双击 bat 没反应 | 文件换行被改成 LF | 见文末 FAQ；用 Git 克隆或重新下载 ZIP |
+| 浏览器打不开 8765 | 端口被占用/服务没起来 | 看命令行窗口里打印的实际端口和报错 |
+| 手机/另一台电脑打不开 | 服务只绑定本机 `127.0.0.1` | 让对方在自己电脑上运行；不要直接暴露本地服务 |
 
 ---
 
