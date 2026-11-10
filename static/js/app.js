@@ -972,14 +972,16 @@
       };
       data.items.forEach(it => {
         if (it.t === 'img') {
+          const isTable = it.kind === 'table';
           const qs = 'page=' + it.page + '&x0=' + it.x0 + '&y0=' + it.y0 +
             '&x1=' + it.x1 + '&y1=' + it.y1;
-          // 图片按"原书点宽 × 2.36（170dpi）× 缩放"显示，默认一半大小
-          const wpx = it.w ? Math.round(it.w * (170 / 72) * imgScale) : null;
-          html += '<figure class="fig-block"><a href="/api/band?' + qs + '&dpi=220" target="_blank" rel="noopener" title="点击查看大图">' +
-            '<img loading="lazy"' + (wpx ? ' style="width:' + wpx + 'px" data-w="' + it.w + '"' : '') +
-            ' src="/api/band?' + qs + '&dpi=170" alt="第 ' + it.page + ' 页的图表/公式"></a>' +
-            '<figcaption>第 ' + it.page + ' 页 · 图表 / 公式</figcaption></figure>';
+          // 普通图表按"原书点宽 × 2.36（170dpi）× 缩放"显示；表格默认铺满阅读区，保证字不糊
+          const wpx = (!isTable && it.w) ? Math.round(it.w * (170 / 72) * imgScale) : null;
+          const sizeAttr = isTable ? ' style="width:100%"' : (wpx ? ' style="width:' + wpx + 'px" data-w="' + it.w + '"' : '');
+          html += '<figure class="fig-block' + (isTable ? ' table-block' : '') + '"><a href="/api/band?' + qs + '&dpi=220" target="_blank" rel="noopener" title="点击查看大图">' +
+            '<img loading="lazy"' + sizeAttr +
+            ' src="/api/band?' + qs + '&dpi=170" alt="第 ' + it.page + ' 页的' + (isTable ? '表格' : '图表/公式') + '"></a>' +
+            '<figcaption>第 ' + it.page + ' 页 · ' + (isTable ? '表格' : '图表 / 公式') + '</figcaption></figure>';
           return;
         }
         const i = it.i;

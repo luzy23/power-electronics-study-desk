@@ -137,6 +137,106 @@ def page_drawings(doc, pno):
     return out
 
 
+# ---------------------------------------------------------------- tables
+def _rect_area(r):
+    return max(0.0, r[2] - r[0]) * max(0.0, r[3] - r[1])
+
+
+def _rect_overlap(a, b):
+    x0 = max(a[0], b[0]); y0 = max(a[1], b[1])
+    x1 = min(a[2], b[2]); y1 = min(a[3], b[3])
+    return max(0.0, x1 - x0) * max(0.0, y1 - y0)
+
+
+def _rect_hit(box, rect, ratio=0.45):
+    """box 有多少比例落在 rect 里。"""
+    area = _rect_area(box)
+    if area <= 0:
+        return False
+    return _rect_overlap(box, rect) >= ratio * area
+
+
+def page_tables(doc, pno):
+    """检测页面上的表格（PyMuPDF find_tables），返回带 bbox 的表格区域。
+
+    只接受至少 2 行 2 列、面积足够大的网格，避免把方框电路/装饰框当成表格。
+    """
+    page = doc[pno]
+    try:
+        found = page.find_tables()
+    except Exception:
+        return []
+    raw = []
+    for table in getattr(found, 'tables', []) or []:
+        try:
+            x0, y0, x1, y1 = table.bbox
+            rows = int(getattr(table, 'row_count', 0) or 0)
+            cols = int(getattr(table, 'col_count', 0) or 0)
+        except Exception:
+            continue
+        w, h = x1 - x0, y1 - y0
+        if w < 80 or h < 18 or rows < 2 or cols < 2 or rows * cols < 4:
+            continue
+        try:
+            cells = table.extract()
+            values = [str(c).strip() for row in cells for c in row
+                      if c is not None and str(c).strip()]
+            fill = len(values) / max(1, rows * cols)
+        except Exception:
+            continue
+        # 电路图/框图也可能被 find_tables 当成网格；它们通常填充率低，或图注里带 Fig.
+        if fill < 0.55:
+            continue
+        if any(re.search(r'(?i)\b(?:fig\.?|figure)\b', v) for v in values):
+            continue
+        raw.append({'bbox': (float(x0), float(y0), float(x1), float(y1)),
+                    'rows': rows, 'cols': cols})
+    # 同一页高度重叠的框只保留一个（防止 find_tables 版本差异导致重复）
+    out = []
+    for table in raw:
+        if any(_rect_overlap(table['bbox'], old['bbox']) >
+               0.7 * min(_rect_area(table['bbox']), _rect_area(old['bbox']))
+               for old in out):
+            continue
+        out.append(table)
+    return out
+
+
+def _table_item(p, table, page_w):
+    x0, y0, x1, y1 = table['bbox']
+    pad = 2
+    x0 = max(36, x0 - pad)
+    x1 = min(page_w - 36, x1 + pad)
+    y0 = max(42, y0 - pad)
+    y1 = y1 + pad
+    w, h = x1 - x0, y1 - y0
+    if w < 100 or h < 18 or w * h < 2500:
+        return None
+    return {'t': 'img', 'kind': 'table', 'page': p, 'w': round(w, 1),
+            'x0': round(x0, 1), 'y0': round(y0, 1),
+            'x1': round(x1, 1), 'y1': round(y1, 1)}
+
+
+def _table_near_block(block, table, pad=42):
+    """题注通常在表格上方/下方 1~2 行内。"""
+    x0, y0, x1, y1 = block['x0'], block['y0'], block['x1'], block['y1']
+    tx0, ty0, tx1, ty1 = table['bbox']
+    if y1 < ty0 - pad or y0 > ty1 + pad:
+        return False
+    return not (x1 < tx0 - 8 or x0 > tx1 + 8)
+
+
+def _without_table_drawings(drawings, tables):
+    """表格线不参与图/公式检测，否则表格会被重复裁成一张图。"""
+    out = []
+    for d in drawings:
+        if any(_rect_hit(d, table['bbox'], 0.65) for table in tables):
+            continue
+        out.append(d)
+    return out
+
+
+
 def band_rect(run, drawings, prev_b, next_b, page_w):
     xs, ys = [], []
     for b in run:
@@ -235,12 +335,42 @@ def build_section(doc, a, b, start_num=None, end_num=None, keep_prefix=True, int
     paras, items = [], []
     started = start_num is None
 
-    def emit(blks, drawings, w, h, p):
+    def emit(blks, drawings, w, h, p, tables=None, emitted_tables=None):
         if not blks:
             return
+        tables = tables or []
+        if emitted_tables is None:
+            emitted_tables = set()
+
+        def flush_tables(before_y=None):
+            for ti, table in enumerate(tables):
+                if ti in emitted_tables:
+                    continue
+                if before_y is not None and table['bbox'][1] > before_y + 4:
+                    continue
+                it = _table_item(p, table, w)
+                if it:
+                    items.append(it)
+                emitted_tables.add(ti)
+
         kinds = [classify(x['t'], x.get('font')) for x in blks]
+        # 表格内部文字不再逐块显示；表格题注强制按正文显示，避免被当成公式图。
+        for bi, blk in enumerate(blks):
+            box = (blk['x0'], blk['y0'], blk['x1'], blk['y1'])
+            if any(_rect_hit(box, table['bbox'], 0.45) for table in tables):
+                kinds[bi] = 't'
+            elif (re.match(r'(?i)^\s*Table\b', blk['t'])
+                  and any(_table_near_block(blk, table) for table in tables)):
+                kinds[bi] = 'a'
+
         i = 0
         while i < len(blks):
+            flush_tables(blks[i]['y0'])
+            if kinds[i] == 't':
+                # 表格文字留给 AI 的纯文本，但不逐块显示；显示用上面的表格图片
+                paras.append(blks[i]['t'])
+                i += 1
+                continue
             if kinds[i] != 'f':
                 t = blks[i]['t']
                 # 页脚的版权/引用行：保留在纯文本里（AI 用），但不显示
@@ -299,12 +429,20 @@ def build_section(doc, a, b, start_num=None, end_num=None, keep_prefix=True, int
                     else:
                         paras.extend(x['t'] for x in g)
             i = j
+        flush_tables()
 
     for p in range(a, b + 1):
         if not (1 <= p <= len(doc)):
             continue
         blocks = page_blocks(doc, p - 1)
+        tables = page_tables(doc, p - 1)
         if not blocks:
+            if tables:
+                w = doc[p - 1].rect.width
+                for table in tables:
+                    it = _table_item(p, table, w)
+                    if it:
+                        items.append(it)
             continue
         intro_blocks = None
         # 起始裁剪：从本节标题所在位置开始
@@ -325,17 +463,23 @@ def build_section(doc, a, b, start_num=None, end_num=None, keep_prefix=True, int
                 blocks = blocks[idx:]
                 started = True
         drawings = page_drawings(doc, p - 1)
+        drawings = _without_table_drawings(drawings, tables)
         w, h = doc[p - 1].rect.width, doc[p - 1].rect.height
+        emitted_tables = set()
         if intro_blocks:
-            emit(intro_blocks, drawings, w, h, p)
+            emit(intro_blocks, drawings, w, h, p, tables, emitted_tables)
         # 结束裁剪：遇到下一节标题就停
         end_here = False
+        end_y = None
         if started and end_num is not None:
             idx = heading_index(blocks, end_num)
             if idx is not None:
+                end_y = blocks[idx]['y0']
                 blocks = blocks[:idx]
                 end_here = True
-        emit(blocks, drawings, w, h, p)
+        if end_y is not None:
+            tables = [table for table in tables if table['bbox'][1] < end_y - 2]
+        emit(blocks, drawings, w, h, p, tables, emitted_tables)
         if end_here:
             break
     # 找不到本节标题时，退回整段页面（避免整节为空）
@@ -345,8 +489,6 @@ def build_section(doc, a, b, start_num=None, end_num=None, keep_prefix=True, int
     items = _merge_items(items)
     items = _dedup_imgs(items)
     return paras, items
-
-
 def _area(r):
     return max(0, r[2] - r[0]) * max(0, r[3] - r[1])
 
@@ -362,7 +504,8 @@ def _dedup_imgs(items, ratio=0.35):
     for it in items:
         if it['t'] == 'img':
             for o in out:
-                if o['t'] != 'img' or o['page'] != it['page']:
+                if (o['t'] != 'img' or o['page'] != it['page']
+                        or o.get('kind') != it.get('kind')):
                     continue
                 a = (o['x0'], o['y0'], o['x1'], o['y1'])
                 b = (it['x0'], it['y0'], it['x1'], it['y1'])
@@ -382,6 +525,7 @@ def _merge_items(items, gap=30):
     out = []
     for it in items:
         if (out and it['t'] == 'img' and out[-1]['t'] == 'img'
+                and out[-1].get('kind') == it.get('kind')
                 and out[-1]['page'] == it['page']):
             a, b = out[-1], it
             if (a['y0'] <= b['y1'] + gap and b['y0'] <= a['y1'] + gap
