@@ -293,9 +293,12 @@ python server.py --no-browser
 | API 服务商 | DeepSeek |
 | Base URL | `https://api.deepseek.com/v1` |
 | API Key | 你的 Key（只保存在本机浏览器） |
-| 模型 | `deepseek-chat` / `deepseek-flash` |
+| 模型 | `deepseek-flash` |
 
-DeepSeek 控制台：<https://platform.deepseek.com>  
+获取API Key（示例）：
+进入DeepSeek 控制台：<https://platform.deepseek.com> 
+注册账号，充值1-5元（小额充值先试验效果）。
+在API Key界面生成API key，并复制到学习台_设置栏_API Key中，
 也可以先用 **演示模式** 预览界面，不填 Key。
 
 ### 7. 安装常见问题
@@ -312,19 +315,6 @@ DeepSeek 控制台：<https://platform.deepseek.com>
 
 ---
 
-## 🗓 自定义学习计划（本分享版新增）
-
-侧边栏「学习计划」→ 顶部「自定义学习计划」：
-
-- 设置 **开始日期 / 截止日期 / 目标章节（如 `1-9` 或 `1,3,5`）/ 每天小时数**，点「保存并生成」；
-- 自动按各章字数把章节分配到每一周，越长的章给越多时间；
-- 可在任意周 **添加自定义任务**（例如「整理第 1 章术语 20 条」），也可单独删除；
-- 想回到作者推荐的节奏，点「载入内置 6 周计划」；
-- 所有勾选、自定义任务、日期设置都会保存到本机，并包含在备份/导出里。
-
-![内置 6 周计划（可一键切回）](docs/screenshots/custom-plan-preset.png)
-
----
 
 ## 🧭 使用流程建议
 
@@ -405,13 +395,6 @@ for f in static/js/*.js; do node --check "$f"; done
 
 ---
 
-## ❓ 常见问题
-
-- **双击 `启动学习台.bat` 没反应 / 窗口一闪而过**：90% 是文件换行被变成了 LF。Windows 批处理必须用 CRLF 换行，从网页复制、部分解压工具或旧版 ZIP 都可能弄坏它。解决：重新下载最新 ZIP（或 `git clone`，仓库用 `.gitattributes` 保持 CRLF）；也可以在该目录打开 PowerShell 运行 `cmd /c 启动学习台.bat`，就能看到真实报错。
-- **窗口里中文乱码**：批处理已内置 `chcp 65001`；如果仍乱码，直接在该目录运行 `python server.py`，用浏览器访问即可，不影响功能。
-- **双击后浏览器没自动打开**：手动访问 `http://127.0.0.1:8765/`；如果 8765 被占用，看窗口里提示的实际端口。
-- **提示没有找到教材 PDF**：正常，本项目不附带教材，把 PDF 命名为 `book.pdf` 放根目录，或复制 `config.example.json` 为 `config.json` 填路径。
-- **构建时提示缺 pymupdf**：运行 `python -m pip install -r requirements.txt`。
 
 ## 🤝 贡献
 
