@@ -625,15 +625,15 @@
   }
 
 
-  // 读前预习需要覆盖整节。旧版硬编码 slice(0,9000)，长节只能看到开头；
-  // 当前书最长约 5 万字符，直接完整送入（DeepSeek 上下文足够）。
-  // 如果未来遇到更长的节，按整节均匀抽样，保证开头/中段/结尾都有覆盖。
-  const PRE_TEXT_MAX = 60000;
-  function sectionTextForPre(text) {
+  // 所有需要原文的 AI 功能统一走这里。旧版多处硬编码 slice(0, 9000/14000)，
+  // 长节只能看到开头；当前书最长约 5 万字符，完整送入。
+  // 超过 6 万字符时按整节均匀采样，保证开头/中段/结尾都有覆盖，而不是只取开头。
+  const AI_TEXT_MAX = 60000;
+  function textForAI(text) {
     text = text || '';
-    if (text.length <= PRE_TEXT_MAX) return text;
+    if (text.length <= AI_TEXT_MAX) return text;
     const parts = 12;
-    const per = Math.floor(PRE_TEXT_MAX / parts);
+    const per = Math.floor(AI_TEXT_MAX / parts);
     const step = text.length / parts;
     const chunks = [];
     for (let i = 0; i < parts; i++) {
@@ -687,12 +687,12 @@
 
   // 习题页的费曼：整章正文 + 本章习题原文
   async function probFeynmanContext() {
-    const chText = S.chapter ? await getChapterContext(S.chapter.id, 40000) : '';
+    const chText = S.chapter ? textForAI(await getChapterContext(S.chapter.id, 60000)) : '';
     let probText = '';
     if (S.chapter && S.chapter.probsPage) {
-      probText = (await getSectionText(S.chapter.id + '-problems')).slice(0, 15000);
+      probText = textForAI(await getSectionText(S.chapter.id + '-problems'));
     }
-    return (chText + '\n\n【本章习题】\n' + probText).slice(0, 46000);
+    return textForAI(chText + '\n\n【本章习题】\n' + probText);
   }
 
   /* ---------------------------------------------------------- book */
@@ -1398,7 +1398,7 @@
 
   async function hlAi(kind) {
     if (!S.hlDraft) return;
-    const text = S.hlDraft.ranges.map(r => r.text).join('\n').slice(0, 6000);
+    const text = textForAI(S.hlDraft.ranges.map(r => r.text).join('\n'));
     if (!text) return toast('没有选中的文字');
     const ta = $('#hlNote');
     const btns = $$('#hlPop .hp-ai .btn');
@@ -1711,8 +1711,8 @@
     let timer = null;
     try {
       const ctx = Object.assign({}, ctxBase(), { question: q, text: '', chapterText: '' });
-      if (useText && S.section) ctx.text = (await getSectionText(S.section.id)).slice(0, 14000);
-      if (useChapter && S.chapter) ctx.chapterText = (await getChapterContext(S.chapter.id, 30000)) || '';
+      if (useText && S.section) ctx.text = textForAI(await getSectionText(S.section.id));
+      if (useChapter && S.chapter) ctx.chapterText = textForAI((await getChapterContext(S.chapter.id, 60000)) || '');
       let messages;
       if (!S.qa.msgs.length) {
         const built = await PROMPTS.build('freeQa', ctx);
@@ -2122,11 +2122,11 @@
     S.chat.display.push({ role: 'assistant', text: '', el: bubble });
     const ac = new AbortController();
     S.abort = ac;
-    const secText = await getSectionText(S.section && S.section.id);
+    const secText = textForAI(await getSectionText(S.section && S.section.id));
     try {
       let messages;
       if (!S.chat.first) {
-        const built = await PROMPTS.build('ask', { text: (secText || '').slice(0, 14000), question: q });
+        const built = await PROMPTS.build('ask', { text: secText || '', question: q });
         S.chat.first = built[1].content;
         S.chat.msgs = [built[1]];
         messages = built;
@@ -2703,7 +2703,7 @@
     'run-pre': async () => {
       await withSection(async () => {
         const useText = $('#preUseText') && $('#preUseText').checked;
-        const text = useText ? sectionTextForPre(await getSectionText(S.section.id)) : '';
+        const text = useText ? textForAI(await getSectionText(S.section.id)) : '';
         delete S.outs.preAnswers;   // 题目重出，旧解答作废
         saveArchive({ preAnswers: '' });
         await generate({
@@ -2717,7 +2717,7 @@
     'run-pre-answers': async () => {
       if (!S.outs.pre) { toast('先生成读前问题'); return; }
       await withSection(async () => {
-        const text = sectionTextForPre(await getSectionText(S.section.id));
+        const text = textForAI(await getSectionText(S.section.id));
         await generate({
           task: 'preAnswers',
           ctx: Object.assign(ctxBase(), { questions: S.outs.pre, text }),
@@ -2752,7 +2752,7 @@
     },
     'run-cards': async () => {
       const ta = $('#cardsInput');
-      const text = (ta.value || '').trim() || (S.section ? (await getSectionText(S.section.id)).slice(0, 5000) : '');
+      const text = (ta.value || '').trim() || (S.section ? textForAI(await getSectionText(S.section.id)) : '');
       if (!text) { toast('先粘贴原文或写主题'); return; }
       S.drafts.cards = text;
       await generate({ task: 'cards', ctx: { text }, outKey: 'cards' });
@@ -2790,7 +2790,7 @@
         delete S.outs.practiceQ; delete S.outs.practiceFB;
         let probs = '';
         if (useProbs) {
-          try { const r = await API.probs(S.chapter.id); probs = (r.text || '').slice(0, 5000); } catch (e) { /* ignore */ }
+          try { const r = await API.probs(S.chapter.id); probs = textForAI(r.text || ''); } catch (e) { /* ignore */ }
         }
         await generate({
           task: 'questions',
@@ -2848,7 +2848,7 @@
       const text = ($('#fyText') || {}).value || '';
       if (text.trim().length < 40) { toast('讲解太短了，至少写 40 字（这是费曼法的关键）'); return; }
       f.topic = topic; f.text = text;
-      const secText = S.section ? (await getSectionText(S.section.id)).slice(0, 6000) : '';
+      const secText = S.section ? textForAI(await getSectionText(S.section.id)) : '';
       await generate({
         task: 'feynmanQ',
         ctx: { topic, text, sectionText: secText },
@@ -2956,9 +2956,9 @@
           text = (cf && cf.text) || '';
           if (cf && cf.chars && cf.chars > text.length) { /* 仍用完整文本 */ }
         } catch (e) {
-          text = await getChapterContext(S.chapter.id, 45000);
+          text = await getChapterContext(S.chapter.id, 60000);
         }
-        if (!text) text = await getChapterContext(S.chapter.id, 45000);
+        if (!text) text = await getChapterContext(S.chapter.id, 60000);
       } else {
         if (!S.section) return toast('先选小节');
         num = S.section.num; title = S.section.title;
@@ -2989,7 +2989,7 @@
         ctx: {
           num: S.chapter ? S.chapter.num : '', title: S.chapter ? S.chapter.title : '',
           qno: S.prob.qno || '（见题干）', question: S.prob.question || '（见教材习题原文）',
-          text: (text || '').slice(0, 20000)
+          text: textForAI(text || '')
         },
         outKey: 'probSolve',
         extraTools: TOOL_EXTRA.probSolve,
@@ -3020,7 +3020,7 @@
       const text = await getSectionText(S.section.id);
       await generate({
         task: 'probAll',
-        ctx: { num: S.chapter ? S.chapter.num : '', title: S.chapter ? S.chapter.title : '', text: (text || '').slice(0, 30000) },
+        ctx: { num: S.chapter ? S.chapter.num : '', title: S.chapter ? S.chapter.title : '', text: textForAI(text || '') },
         outKey: 'probAll',
         extraTools: TOOL_EXTRA.probAll
       });
@@ -3033,7 +3033,7 @@
         const cf = await API.chapterFull(S.chapter.id);
         text = (cf && cf.text) || '';
       } catch (e) { /* fallback */ }
-      if (!text) text = await getChapterContext(S.chapter.id, 45000);
+      if (!text) text = await getChapterContext(S.chapter.id, 60000);
       const baseCtx = { num, title, text };
       const specFull = '# 第' + num + '章 ' + title + ' · 知识点提纲\n\n' + OUTLINE_SPEC;
       if (text.length > MAPREDUCE_THRESHOLD) {
