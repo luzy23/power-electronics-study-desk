@@ -734,6 +734,50 @@
     } catch (e) { return null; }
   }
 
+
+  async function collectProblemAllImages(sid, limit) {
+    if (!sid || !visionEnabled()) return [];
+    const data = await getSectionData(sid);
+    if (!data || !Array.isArray(data.items)) return [];
+    const paras = data.paras || [];
+    const items = data.items;
+    const capRe = /^(Fig\.?|Figure|Table)\s*\d/i;
+    const cands = [];
+    items.forEach((it, idx) => {
+      if (it.t !== 'img') return;
+      const w = Number(it.w) || 0;
+      const h = (Number(it.y1) || 0) - (Number(it.y0) || 0);
+      if (w < 130 || h < 42) return;
+      let caption = '';
+      for (let j = idx - 1; j >= 0 && j >= idx - 4; j--) {
+        const p = items[j];
+        if (p.t === 'p') {
+          const t = String(paras[p.i] || '').trim();
+          if (capRe.test(t)) { caption = t.slice(0, 180); break; }
+        }
+      }
+      if (!caption) {
+        for (let j = idx + 1; j < items.length && j <= idx + 4; j++) {
+          const p = items[j];
+          if (p.t === 'p') {
+            const t = String(paras[p.i] || '').trim();
+            if (capRe.test(t)) { caption = t.slice(0, 180); break; }
+          }
+        }
+      }
+      cands.push({ it, area: w * h, caption });
+    });
+    cands.sort((a, b) => b.area - a.area);
+    const out = [];
+    const max = Math.max(1, Math.min(limit || 12, 16));
+    for (const c of cands) {
+      if (out.length >= max) break;
+      const url = await imageItemDataUrl(c.it);
+      if (url) out.push({ url, page: c.it.page, caption: c.caption || '' });
+    }
+    return out;
+  }
+
   async function collectProblemImages(sid, qno, limit) {
     if (!sid || !visionEnabled()) return [];
     const data = await getSectionData(sid);
@@ -1630,7 +1674,7 @@
       '<div class="hint">填题号（如 2.1、2.3）即可，系统会自动匹配该题后面的图；如果图不对或匹配失败，可在上方填 PDF 页码，或把题干粘贴到下面。每道题的解答都会单独保存，生成新题不会覆盖旧题。</div>' +
       '<div class="toolbar" style="align-items:center;gap:8px;flex-wrap:wrap">' +
       '<input class="input" id="probNo" placeholder="题号，如 2.1" value="' + esc(S.prob.qno) + '" style="max-width:150px">' +
-      '<input class="input" id="probFigPage" placeholder="图页码（可选）" style="max-width:120px" title="自动匹配失败时，填 PDF 页码，直接把该页作为图片发给模型">' +
+      '<input class="input" id="probFigPage" placeholder="备用图页码" autocomplete="off" style="max-width:120px" title="仅当自动匹配失败时，填 PDF 页码，把该页整页发给模型">' +
       '<button class="btn primary" data-act="run-prob-solve">生成这道题的解答</button>' +
       '<button class="btn" data-act="prob-first">用第一题</button></div>' +
       '<textarea class="textarea" id="probQ" placeholder="可选：粘贴题干（题号识别不到时更可靠）" style="min-height:72px;margin-top:8px">' + esc(S.prob.question) + '</textarea>' +
@@ -3189,12 +3233,27 @@
       const text = await getSectionText(S.section.id);
       const qno = S.prob.qno || ((S.prob.question.match(/(\d+\.\d+)/) || [])[1] || '');
       let imgs = await collectProblemImages(S.section.id, qno, 3);
+      if (visionEnabled() && !imgs.length) {
+        // 自动匹配失败：宁可直接附上本节全部习题图，也不要只发几张猜的图
+        imgs = await collectProblemAllImages(S.section.id, 12);
+        if (imgs.length) toast('没有精确匹配到本题，已附上本节全部习题图', 3200);
+      }
       const manualPage = parseInt((($('#probFigPage') || {}).value || ''), 10) || 0;
-      if (manualPage && visionEnabled()) {
+      if (manualPage && visionEnabled() && !imgs.length) {
         const pg = await pageImageDataUrl(manualPage);
         if (pg) imgs = [{ url: pg, page: manualPage, caption: '第 ' + manualPage + ' 页整页' }];
       }
-      if (visionEnabled() && !imgs.length) toast('没有自动匹配到本题图；可在上方填 PDF 页码，或粘贴题干', 3000);
+      if (visionEnabled() && imgs.length) {
+        // 再加一张本题所在整页，给视觉模型更多上下文（题文和图的相对位置）
+        const pages = [...new Set(imgs.map(x => x.page).filter(Boolean))].slice(0, 2);
+        for (const pageNo of pages) {
+          const pg = await pageImageDataUrl(pageNo);
+          if (pg && !imgs.some(x => x.caption && x.caption.indexOf('整页') >= 0 && x.page === pageNo)) {
+            imgs.push({ url: pg, page: pageNo, caption: '第 ' + pageNo + ' 页整页（含题图）' });
+          }
+        }
+      }
+      if (visionEnabled() && !imgs.length) toast('没有匹配到本题图；可在上方填 PDF 页码，或粘贴题干', 3000);
       await generate({
         task: 'probSolve',
         images: imgs,
