@@ -10,8 +10,7 @@
     apiKey: '',
     model: 'deepseek-chat',
     temperature: 0.4,
-    demo: false,
-    thinking: false
+    demo: false
   };
 
   function lsGet(k, d) {
@@ -33,6 +32,11 @@
       const c = API.cfg();
       return !!c.demo || !String(c.apiKey || '').trim();
     },
+    supportsThinking() {
+      const c = API.cfg();
+      return /deepseek/i.test(String(c.baseUrl || '')) || /deepseek/i.test(String(c.model || ''));
+    },
+
     supportsVision() {
       const c = API.cfg();
       if (c.demo) return false;
@@ -93,10 +97,11 @@
       };
       if (o.maxTokens) payload.max_tokens = o.maxTokens;
       else if (/deepseek/i.test(cfg.baseUrl || '')) payload.max_tokens = 8192;
-      // DeepSeek V4.1 默认开启 thinking，思考 token 会把 max_tokens 吃光，
-      // 最终 content 可能为空。学习台默认关闭，设置里可手动打开。
-      if (/deepseek/i.test(String(cfg.baseUrl || '')) || /deepseek/i.test(String(cfg.model || ''))) {
-        payload.thinking = { type: cfg.thinking ? 'enabled' : 'disabled' };
+      // 由每个 AI 功能自己的「深度思考」开关决定；未指定时默认开启（纯文字任务）。
+      // 带图片的任务会在 generate/聊天调用处显式传 false，避免思考 token 吃光正文预算。
+      if (API.supportsThinking()) {
+        const wantThinking = o.thinking === undefined ? true : !!o.thinking;
+        payload.thinking = { type: wantThinking ? 'enabled' : 'disabled' };
       }
       const res = await fetch('/api/chat', {
         method: 'POST',

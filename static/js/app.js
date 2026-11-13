@@ -67,6 +67,7 @@
     quiz: { q: '', a: '', fb: '' },
     chat: { first: '', msgs: [], display: [] },
     qa: { first: '', msgs: [], display: [], useText: true, useChapter: false, useImages: true },
+    thinking: Object.assign({}, store.get('thinking', {})),
     ui: Object.assign({ sideW: 264, readerW: 0, showSide: true, showWork: true, showTop: true, spread: 'single', hlColor: 'yellow', imgScale: 0.5, autoBackup: true },
       store.get('ui', {})),
     busy: false,
@@ -1742,6 +1743,33 @@
   const WORK_TABS_NORMAL = [['pre', '① 预习'], ['close', '② 精读'], ['practice', '③ 练习'], ['feynman', '④ 费曼'], ['ask', '💬 自由问答'], ['pack', '⑤ 学习包']];
   const WORK_TABS_PROBS = [['probSolve', '① 习题解答'], ['probAll', '② 习题全解'], ['probSummary', '③ 章节提纲'], ['probFeynman', '④ 费曼']];
 
+
+  const THINK_DEFAULTS = {
+    pre: false, close: true, practice: false, feynman: false, ask: false,
+    pack: true, qa: false, probSolve: false, probAll: false,
+    probSummary: true, probFeynman: false, quiz: true
+  };
+  const THINK_TASK_KEY = {
+    pre: 'pre', preAnswers: 'pre', close: 'close', formula: 'close', cards: 'close',
+    questions: 'practice', grade: 'practice', feynmanQ: 'feynman', feynmanDiag: 'feynman',
+    pack: 'pack', probSolve: 'probSolve', probAll: 'probAll',
+    chapterSummary: 'probSummary', probFeynmanQ: 'probFeynman', probFeynmanDiag: 'probFeynman',
+    quiz: 'quiz'
+  };
+  function thinkingOn(key) {
+    if (S.thinking && Object.prototype.hasOwnProperty.call(S.thinking, key)) return !!S.thinking[key];
+    return THINK_DEFAULTS[key] !== false;
+  }
+  function currentThinkKey() {
+    if (S.workTab === 'close') return S.closeTab === 'ask' ? 'ask' : 'close';
+    return S.workTab || 'pre';
+  }
+  function thinkingBox(key) {
+    return '<div class="think-bar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft)">' +
+      '<label class="check" style="margin:0"><input type="checkbox" data-think-key="' + key + '"' + (thinkingOn(key) ? ' checked' : '') + '> 深度思考</label>' +
+      '<span class="tiny muted">带图片的任务默认关闭；纯文字任务可开启</span></div>';
+  }
+
   function renderWork() {
     const body = $('#workBody');
     if (!body) return;
@@ -1758,7 +1786,8 @@
       probSolve: renderProbSolve, probAll: renderProbAll, probSummary: renderProbSummary,
       probFeynman: renderProbFeynman
     };
-    body.innerHTML = (map[S.workTab] || (probs ? renderProbSolve : renderPre))();
+    const thinkKey = currentThinkKey();
+    body.innerHTML = (API.supportsThinking() ? thinkingBox(thinkKey) : '') + (map[S.workTab] || (probs ? renderProbSolve : renderPre))();
     if (S.workTab === 'ask') renderQaLog();
     restoreOuts();
   }
@@ -1915,6 +1944,7 @@
     const useText = $('#qaUseText') ? $('#qaUseText').checked : S.qa.useText !== false;
     const useChapter = $('#qaUseChapter') ? $('#qaUseChapter').checked : !!S.qa.useChapter;
     const useImages = visionEnabled() && (($('#qaUseImages') || {}).checked !== undefined ? !!$('#qaUseImages').checked : (S.qa.useImages !== false));
+    const thinkingQa = thinkingOn('qa');
     S.qa.useImages = useImages;
     S.qa.useText = useText;
     S.qa.useChapter = useChapter;
@@ -1963,7 +1993,7 @@
         const t = await PROMPTS.demo('freeQa', { question: q });
         await typeOut(t, d => { text += d; }, ac.signal);
       } else {
-        await API.stream(messages, { signal: ac.signal, onDelta: d => { text += d; } });
+        await API.stream(messages, { signal: ac.signal, thinking: thinkingQa, onDelta: d => { text += d; } });
       }
       clearInterval(timer);
       if (text.trim()) { bubble.innerHTML = md(text); renderMath(bubble); }
@@ -2253,11 +2283,13 @@
         }
         let msgs = msgs0;
         if (opts.images && opts.images.length) msgs = addImagesToMessages(msgs, opts.images);
+        const thinkKey = THINK_TASK_KEY[task] || currentThinkKey();
+        const thinking = opts.thinking !== undefined ? !!opts.thinking : thinkingOn(thinkKey);
         let round = 0;
         let noteEl = null;
         const MAX_ROUNDS = 3;
         while (true) {
-          const r = await API.stream(msgs, { signal: S.abort.signal, onDelta: d => { text += d; } });
+          const r = await API.stream(msgs, { signal: S.abort.signal, thinking, onDelta: d => { text += d; } });
           const fin = r && r.finish;
           if (fin !== 'length') {
             if (noteEl && round > 0 && noteEl.textContent.indexOf('⚠️') < 0) {
@@ -2353,6 +2385,7 @@
     const ac = new AbortController();
     S.abort = ac;
     const secText = textForAI(await getSectionText(S.section && S.section.id));
+    const thinkingAsk = thinkingOn('ask');
     const imgs = S.section ? await collectSectionImages(S.section.id, 4) : [];
     try {
       let messages;
@@ -2376,7 +2409,7 @@
         const t = await PROMPTS.demo('ask', { question: q });
         await typeOut(t, d => { text += d; }, ac.signal);
       } else {
-        await API.stream(messages, { signal: ac.signal, onDelta: d => { text += d; } });
+        await API.stream(messages, { signal: ac.signal, thinking: thinkingAsk, onDelta: d => { text += d; } });
       }
       clearInterval(timer);
       bubble.innerHTML = md(text);
@@ -2613,8 +2646,6 @@
     $('#cfgDemo').checked = !!c.demo;
     const cv = $('#cfgVision');
     if (cv) cv.checked = API.supportsVision();
-    const ct = $('#cfgThinking');
-    if (ct) ct.checked = !!c.thinking;
     const ab = $('#cfgAutoBackup');
     if (ab) ab.checked = S.ui.autoBackup !== false;
     const th = $('#cfgTheme');
@@ -2754,8 +2785,6 @@
     if (themeSel) { S.ui.theme = themeSel.value || 'light'; saveUi(); applyTheme(); }
     const cvEl = $('#cfgVision');
     if (cvEl) { cfg.vision = !!cvEl.checked; cfg.visionExplicit = true; }
-    const ctEl = $('#cfgThinking');
-    if (ctEl) cfg.thinking = !!ctEl.checked;
     API.saveCfg(cfg);
     updateStatusPill();
     toast('设置已保存');
@@ -3731,6 +3760,11 @@
       if (e.target.id === 'qaUseText') { S.qa.useText = !!e.target.checked; saveQaArchive(); return; }
       if (e.target.id === 'qaUseChapter') { S.qa.useChapter = !!e.target.checked; saveQaArchive(); return; }
       if (e.target.id === 'qaUseImages') { S.qa.useImages = !!e.target.checked; saveQaArchive(); return; }
+      if (e.target.dataset && e.target.dataset.thinkKey) {
+        S.thinking[e.target.dataset.thinkKey] = !!e.target.checked;
+        store.set('thinking', S.thinking);
+        return;
+      }
       if (e.target.id === 'cfgTheme') { S.ui.theme = e.target.value || 'light'; saveUi(); applyTheme(); return; }
       if (e.target.id === 'promptTaskSel') { loadPromptTask(e.target.value); return; }
       if (e.target.id === 'cfgAutoBackup') {
