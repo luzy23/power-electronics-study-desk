@@ -2613,6 +2613,8 @@
     $('#cfgDemo').checked = !!c.demo;
     const cv = $('#cfgVision');
     if (cv) cv.checked = API.supportsVision();
+    const ct = $('#cfgThinking');
+    if (ct) ct.checked = !!c.thinking;
     const ab = $('#cfgAutoBackup');
     if (ab) ab.checked = S.ui.autoBackup !== false;
     const th = $('#cfgTheme');
@@ -2752,6 +2754,8 @@
     if (themeSel) { S.ui.theme = themeSel.value || 'light'; saveUi(); applyTheme(); }
     const cvEl = $('#cfgVision');
     if (cvEl) { cfg.vision = !!cvEl.checked; cfg.visionExplicit = true; }
+    const ctEl = $('#cfgThinking');
+    if (ctEl) cfg.thinking = !!ctEl.checked;
     API.saveCfg(cfg);
     updateStatusPill();
     toast('设置已保存');

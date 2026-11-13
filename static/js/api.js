@@ -10,7 +10,8 @@
     apiKey: '',
     model: 'deepseek-chat',
     temperature: 0.4,
-    demo: false
+    demo: false,
+    thinking: false
   };
 
   function lsGet(k, d) {
@@ -92,6 +93,11 @@
       };
       if (o.maxTokens) payload.max_tokens = o.maxTokens;
       else if (/deepseek/i.test(cfg.baseUrl || '')) payload.max_tokens = 8192;
+      // DeepSeek V4.1 默认开启 thinking，思考 token 会把 max_tokens 吃光，
+      // 最终 content 可能为空。学习台默认关闭，设置里可手动打开。
+      if (/deepseek/i.test(String(cfg.baseUrl || '')) || /deepseek/i.test(String(cfg.model || ''))) {
+        payload.thinking = { type: cfg.thinking ? 'enabled' : 'disabled' };
+      }
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {

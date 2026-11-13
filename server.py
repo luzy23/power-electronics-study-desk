@@ -251,6 +251,10 @@ def proxy_chat(payload, auth, on_chunk):
     }
     if payload.get('max_tokens'):
         body['max_tokens'] = int(payload['max_tokens'])
+    if payload.get('thinking') is not None:
+        body['thinking'] = payload['thinking']
+    if payload.get('reasoning_effort'):
+        body['reasoning_effort'] = payload['reasoning_effort']
     data = json.dumps(body, ensure_ascii=False).encode('utf-8')
     req = urllib.request.Request(base, data=data, method='POST')
     req.add_header('Content-Type', 'application/json')
