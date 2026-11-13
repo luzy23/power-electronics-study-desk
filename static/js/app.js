@@ -51,6 +51,7 @@
       store.get('planCfg', {})),
     prob: { qno: '', question: '' },     // 习题解答的题号/题干草稿
     probSolves: [],                      // 本章已保存的逐题解答
+    probAsk: { id: '', text: '' },        // 当前展开的追问框
     done: store.get('done', {}),          // 手动标记"已学完"的章节 / Part
     customPrompts: store.get('prompts', {}),   // 自定义提示词覆盖（task -> 文本）
     pos: store.get('pos', {}),
@@ -102,6 +103,8 @@
       qno: sol.qno || '未编号', question: sol.question || '',
       text: sol.text || '', ts: nowStr()
     };
+    const old = (S.probSolves || []).find(x => String(x.qno) === String(rec.qno));
+    rec.followups = old ? (old.followups || []) : [];
     const list = (S.probSolves || []).filter(x => String(x.qno) !== String(rec.qno));
     list.push(rec);
     S.probSolves = list;
@@ -1094,6 +1097,7 @@
         : { first: '', msgs: [], display: [], useText: true, useChapter: false, useImages: true };
       S.drafts = Object.assign({ close: '', formula: '', cards: '', ask: '' }, (arch && arch.drafts) || {});
       S.probSolves = (arch && Array.isArray(arch.probSolves)) ? arch.probSolves.slice() : [];
+      S.probAsk = { id: '', text: '' };
       if (arch) {
         const hasContent = ARCH_KEYS.some(k => arch[k]) || (arch.chat && arch.chat.display && arch.chat.display.length) || (arch.qa && arch.qa.display && arch.qa.display.length);
         if (hasContent) toast('已恢复本节上次生成的内容（' + (arch.updatedAt || '') + '）', 2200);
@@ -1687,11 +1691,23 @@
     if (list.length) {
       h += '<div class="card mt12"><div class="card-title">已保存的解答 <span class="tag">' + list.length + ' 道题 · 分开保存</span></div>' +
         '<div class="tiny muted" style="margin-bottom:8px">同题号重新生成会更新这一题；删除只影响当前这一条。</div>' +
-        list.map(s => '<details class="prob-sol"><summary><b>题 ' + esc(s.qno || '未编号') + '</b>' +
-          ' <span class="tiny muted">' + esc(s.ts || '') + (s.question ? ' · 自定义题干' : '') + '</span></summary>' +
-          '<div class="md prob-sol-body" data-sid="' + esc(s.id) + '"></div>' +
-          '<div class="toolbar"><button class="btn small-btn ghost" data-act="prob-sol-del" data-id="' + esc(s.id) + '">删除这条解答</button></div>' +
-          '</details>').join('') + '</div>';
+        list.map(s => {
+          const fus = Array.isArray(s.followups) ? s.followups : [];
+          const fuHtml = fus.map((f, fi) => '<div class="prob-fu"><div class="chat-q"><b>追问：</b>' + esc(f.q || '') +
+            '</div><div class="md prob-fu-body" data-sid="' + esc(s.id) + '" data-fui="' + fi + '"></div>' +
+            (f.ts ? '<div class="tiny muted">' + esc(f.ts) + '</div>' : '') + '</div>').join('');
+          const askOpen = !!(S.probAsk && S.probAsk.id === s.id);
+          const askHtml = askOpen ? '<div class="prob-ask-box" style="margin-top:8px">' +
+            '<textarea class="textarea" id="probAskInput" style="min-height:60px" placeholder="对这道解答追问或质疑，例如：为什么这里假设 CCM？第 (b) 步的符号是不是反了？">' + esc(S.probAsk.text || '') + '</textarea>' +
+            '<div class="toolbar"><button class="btn primary small-btn" data-act="prob-fu-send" data-id="' + esc(s.id) + '">发送追问</button>' +
+            '<button class="btn ghost small-btn" data-act="prob-fu-cancel">取消</button></div></div>' : '';
+          return '<details class="prob-sol"' + (askOpen ? ' open' : '') + '><summary><b>题 ' + esc(s.qno || '未编号') + '</b>' +
+            ' <span class="tiny muted">' + esc(s.ts || '') + (s.question ? ' · 自定义题干' : '') + '</span></summary>' +
+            '<div class="md prob-sol-body" data-sid="' + esc(s.id) + '"></div>' +
+            '<div class="toolbar"><button class="btn small-btn" data-act="prob-fu-ask" data-id="' + esc(s.id) + '">追问 / 质疑</button>' +
+            '<button class="btn small-btn ghost" data-act="prob-sol-del" data-id="' + esc(s.id) + '">删除这条解答</button></div>' +
+            fuHtml + askHtml + '</details>';
+        }).join('') + '</div>';
     }
     return h;
   }
@@ -1817,6 +1833,12 @@
       const sidx = el.getAttribute('data-sid');
       const s = sols.find(x => x.id === sidx);
       if (s) U.renderMarkdown(el, s.text || '');
+    });
+    $$('.prob-fu-body').forEach(el => {
+      const sidx = el.getAttribute('data-sid');
+      const s = sols.find(x => x.id === sidx);
+      const i = Number(el.getAttribute('data-fui'));
+      if (s && s.followups && s.followups[i]) U.renderMarkdown(el, s.followups[i].a || '');
     });
   }
 
@@ -2010,6 +2032,69 @@
       document.body.classList.remove('generating');
       const body = $('#workBody');
       if (body) U.scrollToBottom(body);
+    }
+  }
+
+
+  async function runProbFollowup(id) {
+    const sol = (S.probSolves || []).find(x => x.id === id);
+    if (!sol) return toast('没有找到这道题的解答');
+    const ta = $('#probAskInput');
+    const q = ta ? ta.value.trim() : '';
+    if (!q) return toast('先写下要追问或质疑的问题');
+    if (S.busy) return toast('正在生成，请稍候…');
+    S.busy = true;
+    document.body.classList.add('generating');
+    const form = ta.closest('.prob-ask-box') || ta.parentElement;
+    const qEl = document.createElement('div');
+    qEl.className = 'chat-q';
+    qEl.innerHTML = '<b>追问：</b>' + esc(q);
+    form.appendChild(qEl);
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-assistant md live';
+    form.appendChild(bubble);
+    const ac = new AbortController();
+    S.abort = ac;
+    let text = '';
+    let lastLen = -1;
+    const timer = setInterval(() => {
+      if (text.length !== lastLen) { lastLen = text.length; bubble.innerHTML = md(text); }
+    }, 130);
+    try {
+      const imgs = S.section ? await collectProblemImages(S.section.id, sol.qno, 3) : [];
+      const prev = (sol.followups || []).map((f, i) =>
+        '追问 ' + (i + 1) + '：' + (f.q || '') + '\n回答：' + (f.a || '')).join('\n\n');
+      const ctx = Object.assign(ctxBase(), {
+        qno: sol.qno || '未编号',
+        question: sol.question || '',
+        solution: textForAI(sol.text || ''),
+        previous: textForAI(prev || '（无）'),
+        followQuestion: q
+      });
+      let messages = await PROMPTS.build('probFollowup', ctx);
+      messages = addImagesToMessages(messages, imgs,
+        '【附图】这是本题的图和整页上下文；请结合图片核对拓扑，看不清时明确说明缺少哪一部分，不要凭空补全。');
+      if (API.isDemo()) {
+        const t = await PROMPTS.demo('probFollowup', { followQuestion: q });
+        await typeOut(t, d => { text += d; }, ac.signal);
+      } else {
+        await API.stream(messages, { signal: ac.signal, thinking: thinkingOn('probSolve'), onDelta: d => { text += d; } });
+      }
+      clearInterval(timer);
+      bubble.innerHTML = md(text); renderMath(bubble);
+      sol.followups = (sol.followups || []);
+      sol.followups.push({ q, a: text, ts: nowStr() });
+      saveArchive({ probSolves: S.probSolves });
+      S.probAsk = { id: '', text: '' };
+      renderWork();
+      toast('追问已保存');
+    } catch (err) {
+      clearInterval(timer);
+      bubble.innerHTML = '<div class="err-box">⚠️ ' + esc(err && err.message ? err.message : String(err)) + '</div>';
+    } finally {
+      S.busy = false;
+      S.abort = null;
+      document.body.classList.remove('generating');
     }
   }
 
@@ -2666,6 +2751,7 @@
     cards: '术语卡', termQuick: '⚡ 查词速查',
     hlTranslate: '高亮 · AI 翻译', hlSummary: '高亮 · AI 总结',
     ask: '追问',
+    probFollowup: '习题追问',
     freeQa: '自由问答', questions: '练习 · 出题', grade: '练习 · 批改',
     feynmanQ: '费曼 · 学生提问', feynmanDiag: '费曼 · 诊断',
     pack: '⑤ 学习包', packNotes: '长文分块笔记（内部用）', mergeNotes: '长文合并（内部用）',
@@ -3313,6 +3399,15 @@
         }
       });
     },
+    'prob-fu-ask': (el) => {
+      S.probAsk = { id: el.dataset.id, text: '' };
+      renderWork();
+    },
+    'prob-fu-cancel': () => {
+      S.probAsk = { id: '', text: '' };
+      renderWork();
+    },
+    'prob-fu-send': (el) => runProbFollowup(el.dataset.id),
     'prob-sol-del': (el) => {
       const id = el.dataset.id;
       S.probSolves = (S.probSolves || []).filter(x => x.id !== id);
@@ -3775,6 +3870,7 @@
       }
       if (e.target.id === 'sectionSelect') { openSection(e.target.value); return; }
       if (e.target.id === 'probNo') { S.prob.qno = e.target.value.trim(); return; }
+      if (e.target.id === 'probAskInput') { S.probAsk.text = e.target.value; return; }
       if (e.target.id === 'probQ') { S.prob.question = e.target.value; return; }
       if (e.target.id === 'dpiSelect') { S.dpi = parseInt(e.target.value, 10) || 120; renderPageImage(); return; }
       if (e.target.id === 'spreadSelect') {
