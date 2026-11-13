@@ -849,14 +849,17 @@
     const text = typeof last.content === 'string'
       ? last.content
       : (Array.isArray(last.content) ? last.content.filter(p => p.type === 'text').map(p => p.text || '').join('\n') : '');
-    const parts = [{ type: 'text', text: text + '\n\n' + (hint || '【附图】请直接阅读下面的图片；看不清时明确说明缺少什么，不要凭空补全电路连接。') }];
-    images.forEach((img, i) => {
-      const label = img.caption
-        ? ('图 ' + (i + 1) + '（第 ' + img.page + ' 页）：' + img.caption)
-        : ('图 ' + (i + 1) + '（第 ' + img.page + ' 页）');
-      parts.push({ type: 'text', text: label });
-      parts.push({ type: 'image_url', image_url: { url: img.url } });
-    });
+    // 兼容性优先：只保留一个 text part，再接所有 image_url；
+    // 部分 OpenAI 兼容网关只接受「一个 text + 若干 image」的 content 结构。
+    const labels = images.map((img, i) => img.caption
+      ? ('图 ' + (i + 1) + '（第 ' + img.page + ' 页）：' + img.caption)
+      : ('图 ' + (i + 1) + '（第 ' + img.page + ' 页）'));
+    const parts = [{
+      type: 'text',
+      text: text + '\n\n' + (hint || '【附图】请直接阅读下面的图片；看不清时明确说明缺少什么，不要凭空补全电路连接。') +
+        (labels.length ? '\n' + labels.join('\n') : '')
+    }];
+    images.forEach(img => parts.push({ type: 'image_url', image_url: { url: img.url } }));
     out[out.length - 1] = Object.assign({}, last, { content: parts });
     return out;
   }
@@ -3249,7 +3252,6 @@
         const pg = await pageImageDataUrl(manualPage);
         if (pg) imgs = [{ url: pg, page: manualPage, caption: '第 ' + manualPage + ' 页整页' }];
       }
-      if (visionEnabled() && imgs.length) toast('已附 ' + imgs.length + ' 张图给模型', 1800);
       if (visionEnabled() && imgs.length) {
         // 再加一张本题所在整页，给视觉模型更多上下文（题文和图的相对位置）
         const pages = [...new Set(imgs.map(x => x.page).filter(Boolean))].slice(0, 2);
@@ -3260,6 +3262,7 @@
           }
         }
       }
+      if (visionEnabled() && imgs.length) toast('已附 ' + imgs.length + ' 张图给模型', 1800);
       if (visionEnabled() && !imgs.length) toast('没有匹配到本题图；可在上方填 PDF 页码，或粘贴题干', 3000);
       await generate({
         task: 'probSolve',
