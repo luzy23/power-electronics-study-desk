@@ -52,6 +52,7 @@
     prob: { qno: '', question: '' },     // 习题解答的题号/题干草稿
     probSolves: [],                      // 本章已保存的逐题解答
     probAsk: { id: '', text: '' },        // 当前展开的追问框
+    probOpen: '',                          // 保持展开的解答 id
     done: store.get('done', {}),          // 手动标记"已学完"的章节 / Part
     customPrompts: store.get('prompts', {}),   // 自定义提示词覆盖（task -> 文本）
     pos: store.get('pos', {}),
@@ -1098,6 +1099,7 @@
       S.drafts = Object.assign({ close: '', formula: '', cards: '', ask: '' }, (arch && arch.drafts) || {});
       S.probSolves = (arch && Array.isArray(arch.probSolves)) ? arch.probSolves.slice() : [];
       S.probAsk = { id: '', text: '' };
+      S.probOpen = '';
       if (arch) {
         const hasContent = ARCH_KEYS.some(k => arch[k]) || (arch.chat && arch.chat.display && arch.chat.display.length) || (arch.qa && arch.qa.display && arch.qa.display.length);
         if (hasContent) toast('已恢复本节上次生成的内容（' + (arch.updatedAt || '') + '）', 2200);
@@ -1697,6 +1699,7 @@
             '</div><div class="md prob-fu-body" data-sid="' + esc(s.id) + '" data-fui="' + fi + '"></div>' +
             (f.ts ? '<div class="tiny muted">' + esc(f.ts) + '</div>' : '') + '</div>').join('');
           const askOpen = !!(S.probAsk && S.probAsk.id === s.id);
+          const isOpen = askOpen || S.probOpen === s.id;
           const askHtml = askOpen ? '<div class="prob-ask-box" style="margin-top:8px">' +
             '<textarea class="textarea" id="probAskInput" style="min-height:60px" placeholder="对这道解答追问或质疑，例如：为什么这里假设 CCM？第 (b) 步的符号是不是反了？">' + esc(S.probAsk.text || '') + '</textarea>' +
             '<div class="toolbar"><button class="btn primary small-btn" data-act="prob-fu-send" data-id="' + esc(s.id) + '">发送追问</button>' +
@@ -1847,7 +1850,8 @@
       '<button class="btn small-btn" data-act="cards-csv" data-key="cards">下载 CSV</button>',
     pack: '<button class="btn small-btn" data-act="pack-export" data-key="pack">导出 Markdown</button>' +
       '<button class="btn small-btn" data-act="pack-print" data-key="pack">打印</button>',
-    probSolve: '<button class="btn small-btn" data-act="save-note" data-key="probSolve">存为笔记</button>',
+    probSolve: '<button class="btn small-btn" data-act="save-note" data-key="probSolve">存为笔记</button>' +
+    '<button class="btn small-btn" data-act="prob-fu-current">追问 / 质疑</button>',
     probAll: '<button class="btn small-btn" data-act="save-note" data-key="probAll">存为笔记</button>',
     chSummary: '<button class="btn small-btn" data-act="save-note" data-key="chSummary">存为笔记</button>',
     practiceQ: '<button class="btn small-btn" data-act="scroll-answer">去作答 ↓</button>',
@@ -2086,6 +2090,7 @@
       sol.followups.push({ q, a: text, ts: nowStr() });
       saveArchive({ probSolves: S.probSolves });
       S.probAsk = { id: '', text: '' };
+      S.probOpen = sol.id;
       renderWork();
       toast('追问已保存');
     } catch (err) {
@@ -3401,6 +3406,7 @@
     },
     'prob-fu-ask': (el) => {
       S.probAsk = { id: el.dataset.id, text: '' };
+      S.probOpen = el.dataset.id;
       renderWork();
     },
     'prob-fu-cancel': () => {
@@ -3408,6 +3414,17 @@
       renderWork();
     },
     'prob-fu-send': (el) => runProbFollowup(el.dataset.id),
+    'prob-fu-current': () => {
+      const list = S.probSolves || [];
+      const rec = list.find(x => String(x.qno) === String(S.prob.qno)) || list[list.length - 1];
+      if (!rec) return toast('还没有保存的解答');
+      S.probAsk = { id: rec.id, text: '' };
+      S.probOpen = rec.id;
+      renderWork();
+      const el = document.querySelector('details.prob-sol[open]');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      toast('已在下方展开追问框');
+    },
     'prob-sol-del': (el) => {
       const id = el.dataset.id;
       S.probSolves = (S.probSolves || []).filter(x => x.id !== id);
