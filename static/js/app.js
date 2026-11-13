@@ -3238,7 +3238,12 @@
         imgs = await collectProblemAllImages(S.section.id, 12);
         if (imgs.length) toast('没有精确匹配到本题，已附上本节全部习题图', 3200);
       }
-      const manualPage = parseInt((($('#probFigPage') || {}).value || ''), 10) || 0;
+      let manualPage = parseInt((($('#probFigPage') || {}).value || ''), 10) || 0;
+      const probStart = S.chapter && Number(S.chapter.probsPage);
+      if (manualPage && probStart && manualPage < probStart) {
+        toast('页码不在本章习题范围内，已忽略；自动匹配仍会生效', 2600);
+        manualPage = 0;
+      }
       if (manualPage && visionEnabled() && !imgs.length) {
         const pg = await pageImageDataUrl(manualPage);
         if (pg) imgs = [{ url: pg, page: manualPage, caption: '第 ' + manualPage + ' 页整页' }];
