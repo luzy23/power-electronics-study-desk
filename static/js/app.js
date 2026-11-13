@@ -713,6 +713,90 @@
     return out;
   }
 
+
+  async function pageImageDataUrl(pageNo) {
+    const n = parseInt(pageNo, 10);
+    if (!n || n < 1) return null;
+    const key = 'page:' + n;
+    if (VISION_IMAGE_CACHE.has(key)) return VISION_IMAGE_CACHE.get(key);
+    try {
+      const r = await fetch('/api/page?n=' + n + '&dpi=150');
+      if (!r.ok) return null;
+      const blob = await r.blob();
+      const url = await new Promise((resolve) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => resolve(null);
+        fr.readAsDataURL(blob);
+      });
+      if (url) VISION_IMAGE_CACHE.set(key, url);
+      return url;
+    } catch (e) { return null; }
+  }
+
+  async function collectProblemImages(sid, qno, limit) {
+    if (!sid || !visionEnabled()) return [];
+    const data = await getSectionData(sid);
+    if (!data || !Array.isArray(data.items)) return [];
+    const paras = data.paras || [];
+    const items = data.items;
+    const target = String(qno || '').trim().replace(/[.)]+$/, '');
+    if (!target) return [];
+    // 在同一小节里找 `4.1 ...`，一直取到下一道 `4.2 ...` 为止；
+    // 这本书的 Problems 排版是“题目文字 → 本题图 → 下一题文字”，所以这里能精确拿到 Fig. 4.79。
+    let start = -1, end = items.length;
+    const probRe = /^(\d+\.\d+)[.)]?\s+/;
+    for (let idx = 0; idx < items.length; idx++) {
+      const it = items[idx];
+      if (it.t !== 'p') continue;
+      const text = String(paras[it.i] || '').trim();
+      const m = text.match(probRe);
+      if (start < 0) {
+        if (m && m[1] === target) start = idx;
+      } else if (m) {
+        end = idx;
+        break;
+      }
+    }
+    if (start < 0) return [];
+    const capRe = /^(Fig\.?|Figure|Table)\s*\d/i;
+    const cands = [];
+    for (let idx = start; idx < end; idx++) {
+      const it = items[idx];
+      if (it.t !== 'img') continue;
+      const w = Number(it.w) || 0;
+      const h = (Number(it.y1) || 0) - (Number(it.y0) || 0);
+      if (w < 130 || h < 42) continue;
+      let caption = '';
+      for (let j = idx - 1; j >= start && j >= idx - 4; j--) {
+        const p = items[j];
+        if (p.t === 'p') {
+          const t = String(paras[p.i] || '').trim();
+          if (capRe.test(t)) { caption = t.slice(0, 180); break; }
+        }
+      }
+      if (!caption) {
+        for (let j = idx + 1; j < end && j <= idx + 4; j++) {
+          const p = items[j];
+          if (p.t === 'p') {
+            const t = String(paras[p.i] || '').trim();
+            if (capRe.test(t)) { caption = t.slice(0, 180); break; }
+          }
+        }
+      }
+      cands.push({ it, area: w * h, caption });
+    }
+    cands.sort((a, b) => b.area - a.area);
+    const out = [];
+    const max = Math.max(1, Math.min(limit || 3, 4));
+    for (const c of cands) {
+      if (out.length >= max) break;
+      const url = await imageItemDataUrl(c.it);
+      if (url) out.push({ url, page: c.it.page, caption: c.caption || '' });
+    }
+    return out;
+  }
+
   function addImagesToMessages(messages, images, hint) {
     if (!images || !images.length) return messages;
     const out = messages.slice();
@@ -1543,9 +1627,10 @@
 
   function renderProbSolve() {
     let h = '<div class="card"><div class="card-title">习题解答 <span class="tag">选一道题 · 逐步推导</span></div>' +
-      '<div class="hint">填题号（如 2.1、2.3）即可；如果题号不好识别，把题干粘贴到下面更稳。每道题的解答都会单独保存，生成新题不会覆盖旧题。</div>' +
+      '<div class="hint">填题号（如 2.1、2.3）即可，系统会自动匹配该题后面的图；如果图不对或匹配失败，可在上方填 PDF 页码，或把题干粘贴到下面。每道题的解答都会单独保存，生成新题不会覆盖旧题。</div>' +
       '<div class="toolbar" style="align-items:center;gap:8px;flex-wrap:wrap">' +
       '<input class="input" id="probNo" placeholder="题号，如 2.1" value="' + esc(S.prob.qno) + '" style="max-width:150px">' +
+      '<input class="input" id="probFigPage" placeholder="图页码（可选）" style="max-width:120px" title="自动匹配失败时，填 PDF 页码，直接把该页作为图片发给模型">' +
       '<button class="btn primary" data-act="run-prob-solve">生成这道题的解答</button>' +
       '<button class="btn" data-act="prob-first">用第一题</button></div>' +
       '<textarea class="textarea" id="probQ" placeholder="可选：粘贴题干（题号识别不到时更可靠）" style="min-height:72px;margin-top:8px">' + esc(S.prob.question) + '</textarea>' +
@@ -3102,7 +3187,14 @@
       S.prob.question = qEl ? qEl.value.trim() : S.prob.question;
       if (!S.prob.qno && !S.prob.question) return toast('先填题号，或把题干粘贴到下面');
       const text = await getSectionText(S.section.id);
-      const imgs = await collectSectionImages(S.section.id, 4);
+      const qno = S.prob.qno || ((S.prob.question.match(/(\d+\.\d+)/) || [])[1] || '');
+      let imgs = await collectProblemImages(S.section.id, qno, 3);
+      const manualPage = parseInt((($('#probFigPage') || {}).value || ''), 10) || 0;
+      if (manualPage && visionEnabled()) {
+        const pg = await pageImageDataUrl(manualPage);
+        if (pg) imgs = [{ url: pg, page: manualPage, caption: '第 ' + manualPage + ' 页整页' }];
+      }
+      if (visionEnabled() && !imgs.length) toast('没有自动匹配到本题图；可在上方填 PDF 页码，或粘贴题干', 3000);
       await generate({
         task: 'probSolve',
         images: imgs,
