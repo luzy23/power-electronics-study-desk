@@ -32,6 +32,16 @@
       const c = API.cfg();
       return !!c.demo || !String(c.apiKey || '').trim();
     },
+    supportsVision() {
+      const c = API.cfg();
+      if (c.demo) return false;
+      if (c.vision === false) return false;
+      if (c.vision === true) return true;
+      // 自动识别常见多模态模型；设置里也可以手动勾选覆盖
+      return /(?:v4\.1|v4|vl|vision|gpt-4o|gpt-4\.1|gemini|claude|qwen.*vl|llava|minicpm-v)/i
+        .test(String(c.model || ''));
+    },
+
     modeLabel() {
       const c = API.cfg();
       if (c.demo) return '演示模式';

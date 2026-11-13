@@ -66,7 +66,7 @@
     pack: Object.assign({ scope: 'chapter', parts: PACK_DEFAULT.slice() }, store.get('pack', {})),
     quiz: { q: '', a: '', fb: '' },
     chat: { first: '', msgs: [], display: [] },
-    qa: { first: '', msgs: [], display: [], useText: true, useChapter: false },
+    qa: { first: '', msgs: [], display: [], useText: true, useChapter: false, useImages: true },
     ui: Object.assign({ sideW: 264, readerW: 0, showSide: true, showWork: true, showTop: true, spread: 'single', hlColor: 'yellow', imgScale: 0.5, autoBackup: true },
       store.get('ui', {})),
     busy: false,
@@ -644,6 +644,95 @@
     return chunks.join('\n\n[…]（长节已按全文均匀采样）\n\n');
   }
 
+
+  /* ---------------- 多模态：把相关图块直接发给模型 ---------------- */
+  const VISION_IMAGE_CACHE = new Map();
+  const VISION_IMAGE_MAX = 4;
+
+  function visionEnabled() {
+    try { return !!(API.supportsVision && API.supportsVision()); } catch (e) { return false; }
+  }
+
+  async function imageItemDataUrl(it) {
+    const key = [it.page, it.x0, it.y0, it.x1, it.y1].join(':');
+    if (VISION_IMAGE_CACHE.has(key)) return VISION_IMAGE_CACHE.get(key);
+    try {
+      const qs = 'page=' + it.page + '&x0=' + it.x0 + '&y0=' + it.y0 +
+        '&x1=' + it.x1 + '&y1=' + it.y1;
+      const r = await fetch('/api/band?' + qs + '&dpi=150');
+      if (!r.ok) return null;
+      const blob = await r.blob();
+      const url = await new Promise((resolve) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => resolve(null);
+        fr.readAsDataURL(blob);
+      });
+      if (url) VISION_IMAGE_CACHE.set(key, url);
+      return url;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function collectSectionImages(sid, limit) {
+    if (!sid || !visionEnabled()) return [];
+    const data = await getSectionData(sid);
+    if (!data || !Array.isArray(data.items)) return [];
+    const items = data.items;
+    const paras = data.paras || [];
+    const capRe = /^(Fig\.?|Figure|Table)\s*\d/i;
+    const cands = [];
+    items.forEach((it, idx) => {
+      if (it.t !== 'img') return;
+      const w = Number(it.w) || 0;
+      const h = (Number(it.y1) || 0) - (Number(it.y0) || 0);
+      // 细长的公式碎片不发给视觉模型；图/表保留
+      if (w < 130 || h < 42) return;
+      let caption = '';
+      for (let j = idx - 1; j >= 0 && j >= idx - 4; j--) {
+        const p = items[j];
+        if (p.t === 'p' && capRe.test(String(paras[p.i] || '').trim())) { caption = String(paras[p.i] || '').trim().slice(0, 180); break; }
+      }
+      if (!caption) {
+        for (let j = idx + 1; j < items.length && j <= idx + 4; j++) {
+          const p = items[j];
+          if (p.t === 'p' && capRe.test(String(paras[p.i] || '').trim())) { caption = String(paras[p.i] || '').trim().slice(0, 180); break; }
+        }
+      }
+      cands.push({ it, area: w * h, caption });
+    });
+    cands.sort((a, b) => (Number(!!b.caption) - Number(!!a.caption)) || (b.area - a.area));
+    const out = [];
+    const max = Math.max(1, Math.min(limit || VISION_IMAGE_MAX, 6));
+    for (const c of cands) {
+      if (out.length >= max) break;
+      const url = await imageItemDataUrl(c.it);
+      if (url) out.push({ url, page: c.it.page, caption: c.caption || '' });
+    }
+    return out;
+  }
+
+  function addImagesToMessages(messages, images, hint) {
+    if (!images || !images.length) return messages;
+    const out = messages.slice();
+    const last = out[out.length - 1];
+    if (!last || last.role !== 'user') return messages;
+    const text = typeof last.content === 'string'
+      ? last.content
+      : (Array.isArray(last.content) ? last.content.filter(p => p.type === 'text').map(p => p.text || '').join('\n') : '');
+    const parts = [{ type: 'text', text: text + '\n\n' + (hint || '【附图】请直接阅读下面的图片；看不清时明确说明缺少什么，不要凭空补全电路连接。') }];
+    images.forEach((img, i) => {
+      const label = img.caption
+        ? ('图 ' + (i + 1) + '（第 ' + img.page + ' 页）：' + img.caption)
+        : ('图 ' + (i + 1) + '（第 ' + img.page + ' 页）');
+      parts.push({ type: 'text', text: label });
+      parts.push({ type: 'image_url', image_url: { url: img.url } });
+    });
+    out[out.length - 1] = Object.assign({}, last, { content: parts });
+    return out;
+  }
+
   async function getSectionText(sid) {
     if (!sid) return '';
     if (S.sectionTexts[sid] != null) return S.sectionTexts[sid];
@@ -869,8 +958,8 @@
         : { first: '', msgs: [], display: [] };
       S.qa = (arch && arch.qa && arch.qa.display && arch.qa.display.length)
         ? { first: arch.qa.first || '', msgs: arch.qa.msgs || [], display: arch.qa.display,
-            useText: arch.qa.useText !== false, useChapter: !!arch.qa.useChapter }
-        : { first: '', msgs: [], display: [], useText: true, useChapter: false };
+            useText: arch.qa.useText !== false, useChapter: !!arch.qa.useChapter, useImages: arch.qa.useImages !== false }
+        : { first: '', msgs: [], display: [], useText: true, useChapter: false, useImages: true };
       S.drafts = Object.assign({ close: '', formula: '', cards: '', ask: '' }, (arch && arch.drafts) || {});
       S.probSolves = (arch && Array.isArray(arch.probSolves)) ? arch.probSolves.slice() : [];
       if (arch) {
@@ -1651,15 +1740,18 @@
   }
 
   function renderFreeAsk() {
-    if (!S.qa) S.qa = { first: '', msgs: [], display: [], useText: true, useChapter: false };
+    if (!S.qa) S.qa = { first: '', msgs: [], display: [], useText: true, useChapter: false, useImages: true };
     const useText = S.qa.useText !== false;
     const useChapter = !!S.qa.useChapter;
+    const vision = visionEnabled();
+    const useImages = S.qa.useImages !== false && vision;
     let h = '<div class="card"><div class="card-title">自由问答 <span class="tag">就本节内容随时提问</span></div>' +
       '<div class="tiny muted" style="margin-bottom:8px">当前：' +
         esc(S.chapter ? ('第 ' + S.chapter.num + ' 章 / ') : '') + esc(S.section ? S.section.title : '') +
       '　·　问答按小节保存，切换小节后仍然保留</div>' +
       '<div class="row" style="gap:16px;flex-wrap:wrap;margin-bottom:8px">' +
       '<label class="check"><input type="checkbox" id="qaUseText"' + (useText ? ' checked' : '') + '> 附上本节原文（推荐，更准确）</label>' +
+      (vision ? '<label class="check"><input type="checkbox" id="qaUseImages"' + (useImages ? ' checked' : '') + '> 附上本节插图（多模态）</label>' : '') +
       '<label class="check"><input type="checkbox" id="qaUseChapter"' + (useChapter ? ' checked' : '') + '> 附上整章上下文（较长）</label></div>' +
       '<div id="qaLog" class="md" style="max-height:380px;overflow:auto;background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:10px"></div>' +
       '<textarea class="textarea" id="qaInput" style="min-height:80px;margin-top:8px" placeholder="例如：为什么这里假设 CCM？如果进入 DCM，这个公式还成立吗？"></textarea>' +
@@ -1677,7 +1769,8 @@
         msgs: S.qa.msgs || [],
         display: (S.qa.display || []).map(m => ({ role: m.role, text: m.text })),
         useText: S.qa.useText !== false,
-        useChapter: !!S.qa.useChapter
+        useChapter: !!S.qa.useChapter,
+        useImages: S.qa.useImages !== false
       }
     });
   }
@@ -1689,6 +1782,8 @@
     if (S.busy) { toast('正在生成，请稍候…'); return; }
     const useText = $('#qaUseText') ? $('#qaUseText').checked : S.qa.useText !== false;
     const useChapter = $('#qaUseChapter') ? $('#qaUseChapter').checked : !!S.qa.useChapter;
+    const useImages = visionEnabled() && (($('#qaUseImages') || {}).checked !== undefined ? !!$('#qaUseImages').checked : (S.qa.useImages !== false));
+    S.qa.useImages = useImages;
     S.qa.useText = useText;
     S.qa.useChapter = useChapter;
     S.busy = true;
@@ -1713,17 +1808,19 @@
       const ctx = Object.assign({}, ctxBase(), { question: q, text: '', chapterText: '' });
       if (useText && S.section) ctx.text = textForAI(await getSectionText(S.section.id));
       if (useChapter && S.chapter) ctx.chapterText = textForAI((await getChapterContext(S.chapter.id, 60000)) || '');
+      const qaImgs = useImages && S.section ? await collectSectionImages(S.section.id, 4) : [];
       let messages;
       if (!S.qa.msgs.length) {
         const built = await PROMPTS.build('freeQa', ctx);
         S.qa.first = built[1].content;
         S.qa.msgs = [built[1]];
-        messages = built;
+        messages = addImagesToMessages(built, qaImgs, '【附图】请直接阅读下面的图片，重点看电路拓扑、连线、节点、元件标注和开关状态；如果图片不足以判断，请明确说明缺少哪一部分，不要凭空补全。');
       } else {
         const sys = await PROMPTS.raw('system');
         const history = S.qa.msgs.slice(-12);
         messages = [{ role: 'system', content: sys }].concat(history, [{ role: 'user', content: q }]);
         S.qa.msgs.push({ role: 'user', content: q });
+        messages = addImagesToMessages(messages, qaImgs, '【附图】请直接阅读下面的图片，重点看电路拓扑、连线、节点、元件标注和开关状态；如果图片不足以判断，请明确说明缺少哪一部分，不要凭空补全。');
       }
       let text = '';
       let lastLen = -1;
@@ -2023,6 +2120,7 @@
           msgs0 = await PROMPTS.build(task, ctx);
         }
         let msgs = msgs0;
+        if (opts.images && opts.images.length) msgs = addImagesToMessages(msgs, opts.images);
         let round = 0;
         let noteEl = null;
         const MAX_ROUNDS = 3;
@@ -2123,6 +2221,7 @@
     const ac = new AbortController();
     S.abort = ac;
     const secText = textForAI(await getSectionText(S.section && S.section.id));
+    const imgs = S.section ? await collectSectionImages(S.section.id, 4) : [];
     try {
       let messages;
       if (!S.chat.first) {
@@ -2135,6 +2234,7 @@
         messages = [{ role: 'system', content: sys }].concat(S.chat.msgs, [{ role: 'user', content: q }]);
         S.chat.msgs.push({ role: 'user', content: q });
       }
+      messages = addImagesToMessages(messages, imgs, '【附图】请直接阅读下面的图片，重点看电路拓扑、连线、节点、元件标注和开关状态；如果图片不足以判断，请明确说明缺少哪一部分，不要凭空补全。');
       let text = '';
       let lastLen = -1;
       const timer = setInterval(() => {
@@ -2379,6 +2479,8 @@
     $('#cfgModel').value = c.model || '';
     $('#cfgTemp').value = c.temperature;
     $('#cfgDemo').checked = !!c.demo;
+    const cv = $('#cfgVision');
+    if (cv) cv.checked = API.supportsVision();
     const ab = $('#cfgAutoBackup');
     if (ab) ab.checked = S.ui.autoBackup !== false;
     const th = $('#cfgTheme');
@@ -2516,6 +2618,8 @@
     };
     const themeSel = $('#cfgTheme');
     if (themeSel) { S.ui.theme = themeSel.value || 'light'; saveUi(); applyTheme(); }
+    const cvEl = $('#cfgVision');
+    if (cvEl) cfg.vision = !!cvEl.checked;
     API.saveCfg(cfg);
     updateStatusPill();
     toast('设置已保存');
@@ -2704,11 +2808,13 @@
       await withSection(async () => {
         const useText = $('#preUseText') && $('#preUseText').checked;
         const text = useText ? textForAI(await getSectionText(S.section.id)) : '';
+        const imgs = useText ? await collectSectionImages(S.section.id, 4) : [];
         delete S.outs.preAnswers;   // 题目重出，旧解答作废
         saveArchive({ preAnswers: '' });
         await generate({
           task: 'pre',
           ctx: Object.assign(ctxBase(), { text, learned: learnedContext().text }),
+          images: imgs,
           outKey: 'pre',
           after: () => { markStage('pre'); renderWork(); }
         });
@@ -2718,9 +2824,11 @@
       if (!S.outs.pre) { toast('先生成读前问题'); return; }
       await withSection(async () => {
         const text = textForAI(await getSectionText(S.section.id));
+        const imgs = await collectSectionImages(S.section.id, 4);
         await generate({
           task: 'preAnswers',
           ctx: Object.assign(ctxBase(), { questions: S.outs.pre, text }),
+          images: imgs,
           outKey: 'preAnswers',
           after: () => renderWork()
         });
@@ -2760,7 +2868,7 @@
     'run-ask': () => runAsk(),
     'run-qa': () => runFreeAsk(),
     'clear-qa': () => {
-      S.qa = { first: '', msgs: [], display: [], useText: S.qa ? S.qa.useText : true, useChapter: S.qa ? !!S.qa.useChapter : false };
+      S.qa = { first: '', msgs: [], display: [], useText: S.qa ? S.qa.useText : true, useChapter: S.qa ? !!S.qa.useChapter : false, useImages: S.qa ? S.qa.useImages !== false : true };
       saveQaArchive();
       renderWork();
     },
@@ -2792,9 +2900,11 @@
         if (useProbs) {
           try { const r = await API.probs(S.chapter.id); probs = textForAI(r.text || ''); } catch (e) { /* ignore */ }
         }
+        const imgs = await collectSectionImages(S.section.id, 4);
         await generate({
           task: 'questions',
           ctx: Object.assign(ctxBase(), { type: p.type, n: p.n, level: p.level, probs }),
+          images: imgs,
           outKey: 'practiceQ',
           extraTools: '<button class="btn small-btn" data-act="scroll-answer">去作答 ↓</button>',
           after: (text) => { p.q = text; S.outs.practiceQ = text; renderWork(); }
@@ -2849,9 +2959,11 @@
       if (text.trim().length < 40) { toast('讲解太短了，至少写 40 字（这是费曼法的关键）'); return; }
       f.topic = topic; f.text = text;
       const secText = S.section ? textForAI(await getSectionText(S.section.id)) : '';
+      const imgs = S.section ? await collectSectionImages(S.section.id, 4) : [];
       await generate({
         task: 'feynmanQ',
         ctx: { topic, text, sectionText: secText },
+        images: imgs,
         outKey: 'feynmanQ',
         after: (t) => {
           f.q = t;
@@ -2865,8 +2977,10 @@
       const answers = ($('#fyAnswer') || {}).value || '';
       if (answers.trim().length < 10) { toast('先回答上面的问题'); return; }
       f.a = answers;
+      const imgs = S.section ? await collectSectionImages(S.section.id, 4) : [];
       await generate({
         task: 'feynmanDiag',
+        images: imgs,
         ctx: { topic: f.topic, text: f.text, questions: f.q, answers },
         outKey: 'feynmanDiag',
         after: (t) => {
@@ -2890,8 +3004,10 @@
       if (text.trim().length < 40) { toast('讲解太短了，至少写 40 字（这是费曼法的关键）'); return; }
       f.topic = topic; f.text = text;
       const context = await probFeynmanContext();
+      const imgs = await collectSectionImages(S.section.id, 4);
       await generate({
         task: 'probFeynmanQ',
+        images: imgs,
         ctx: { num: S.chapter ? S.chapter.num : '', title: S.chapter ? S.chapter.title : '', topic, text, context },
         outKey: 'feynmanQ',
         after: (t) => {
@@ -2907,8 +3023,10 @@
       if (answers.trim().length < 10) { toast('先回答上面的问题'); return; }
       f.a = answers;
       const context = await probFeynmanContext();
+      const imgs = await collectSectionImages(S.section.id, 4);
       await generate({
         task: 'probFeynmanDiag',
+        images: imgs,
         ctx: {
           num: S.chapter ? S.chapter.num : '', title: S.chapter ? S.chapter.title : '',
           topic: f.topic, text: f.text, questions: f.q, answers, context
@@ -2984,8 +3102,10 @@
       S.prob.question = qEl ? qEl.value.trim() : S.prob.question;
       if (!S.prob.qno && !S.prob.question) return toast('先填题号，或把题干粘贴到下面');
       const text = await getSectionText(S.section.id);
+      const imgs = await collectSectionImages(S.section.id, 4);
       await generate({
         task: 'probSolve',
+        images: imgs,
         ctx: {
           num: S.chapter ? S.chapter.num : '', title: S.chapter ? S.chapter.title : '',
           qno: S.prob.qno || '（见题干）', question: S.prob.question || '（见教材习题原文）',
@@ -3018,8 +3138,10 @@
     'run-prob-all': async () => {
       if (!S.section || !S.section.isProblems) return;
       const text = await getSectionText(S.section.id);
+      const imgs = await collectSectionImages(S.section.id, 4);
       await generate({
         task: 'probAll',
+        images: imgs,
         ctx: { num: S.chapter ? S.chapter.num : '', title: S.chapter ? S.chapter.title : '', text: textForAI(text || '') },
         outKey: 'probAll',
         extraTools: TOOL_EXTRA.probAll
@@ -3443,6 +3565,7 @@
       if (e.target.id === 'gSearch') { S.wbQuery = (e.target.value || '').trim(); showView('glossary'); return; }
       if (e.target.id === 'qaUseText') { S.qa.useText = !!e.target.checked; saveQaArchive(); return; }
       if (e.target.id === 'qaUseChapter') { S.qa.useChapter = !!e.target.checked; saveQaArchive(); return; }
+      if (e.target.id === 'qaUseImages') { S.qa.useImages = !!e.target.checked; saveQaArchive(); return; }
       if (e.target.id === 'cfgTheme') { S.ui.theme = e.target.value || 'light'; saveUi(); applyTheme(); return; }
       if (e.target.id === 'promptTaskSel') { loadPromptTask(e.target.value); return; }
       if (e.target.id === 'cfgAutoBackup') {
