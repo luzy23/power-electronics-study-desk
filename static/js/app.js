@@ -2748,7 +2748,7 @@
     const themeSel = $('#cfgTheme');
     if (themeSel) { S.ui.theme = themeSel.value || 'light'; saveUi(); applyTheme(); }
     const cvEl = $('#cfgVision');
-    if (cvEl) cfg.vision = !!cvEl.checked;
+    if (cvEl) { cfg.vision = !!cvEl.checked; cfg.visionExplicit = true; }
     API.saveCfg(cfg);
     updateStatusPill();
     toast('设置已保存');
@@ -3231,6 +3231,7 @@
       S.prob.question = qEl ? qEl.value.trim() : S.prob.question;
       if (!S.prob.qno && !S.prob.question) return toast('先填题号，或把题干粘贴到下面');
       const text = await getSectionText(S.section.id);
+      if (!visionEnabled()) toast('当前模型未启用图片输入：请在设置里勾选「把相关插图一起发给模型」，并确认模型支持图片', 3400);
       const qno = S.prob.qno || ((S.prob.question.match(/(\d+\.\d+)/) || [])[1] || '');
       let imgs = await collectProblemImages(S.section.id, qno, 3);
       if (visionEnabled() && !imgs.length) {
@@ -3248,6 +3249,7 @@
         const pg = await pageImageDataUrl(manualPage);
         if (pg) imgs = [{ url: pg, page: manualPage, caption: '第 ' + manualPage + ' 页整页' }];
       }
+      if (visionEnabled() && imgs.length) toast('已附 ' + imgs.length + ' 张图给模型', 1800);
       if (visionEnabled() && imgs.length) {
         // 再加一张本题所在整页，给视觉模型更多上下文（题文和图的相对位置）
         const pages = [...new Set(imgs.map(x => x.page).filter(Boolean))].slice(0, 2);

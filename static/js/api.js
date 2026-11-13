@@ -35,10 +35,13 @@
     supportsVision() {
       const c = API.cfg();
       if (c.demo) return false;
-      if (c.vision === false) return false;
+      // visionExplicit 是后来新增的：旧版本因为 deepseek-flash 没被识别而保存过
+      // vision:false，不能让它继续把正确的多模态模型锁死。只有用户在新版设置里
+      // 明确取消勾选，才真正禁用图片。
+      if (c.visionExplicit && c.vision === false) return false;
       if (c.vision === true) return true;
       // 自动识别常见多模态模型；设置里也可以手动勾选覆盖
-      return /(?:v4\.1|v4|vl|vision|gpt-4o|gpt-4\.1|gemini|claude|qwen.*vl|llava|minicpm-v)/i
+      return /(?:deepseek.*flash|v4\.1|v4|vl|vision|gpt-4o|gpt-4\.1|gemini|claude|qwen.*vl|llava|minicpm-v)/i
         .test(String(c.model || ''));
     },
 
