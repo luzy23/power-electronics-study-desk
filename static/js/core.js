@@ -38,20 +38,40 @@
 
   function md(text) {
     const src = String(text || '');
-    // --- 1) 保护 \( \) \[ \] 数学定界符，避免被 Markdown 当成转义吃掉 ---
+    // --- 1) 统一数学定界符，并把公式块先变成占位符，避免 marked 把
+    //        $$ 行、换行、下划线当成 Markdown 处理 ---
+    let pre = src.replace(/\r\n/g, '\n');
+    const mathBlocks = [];
+    const holdMath = (tex, display) => {
+      const t = String(tex || '').trim();
+      if (!t) return '';
+      mathBlocks.push({ tex: t, display: !!display });
+      return '\u0003' + (mathBlocks.length - 1) + '\u0004';
+    };
+    // \[...\] / \(...\)
+    pre = pre.replace(/\\\[([\s\S]*?)\\\]/g, (m, t) => holdMath(t, true));
+    pre = pre.replace(/\\\(([\s\S]*?)\\\)/g, (m, t) => holdMath(t, false));
+    // $$...$$ 显示公式（优先于行内）
+    pre = pre.replace(/\$\$([\s\S]*?)\$\$/g, (m, t) => holdMath(t, true));
+    // 模型偶尔多打一行孤立的 $$（或空块），直接清掉
+    pre = pre.replace(/^[ \t]*\$\$[ \t]*$/gm, '');
+
+    // --- 2) 保护剩余的反斜杠定界符（极少见） ---
     const saved = [];
     const save = (m) => { saved.push(m); return '\u0001' + (saved.length - 1) + '\u0002'; };
-    let pre = src
+    pre = pre
       .replace(/\\\(/g, () => save('\\('))
       .replace(/\\\)/g, () => save('\\)'))
       .replace(/\\\[/g, () => save('\\['))
       .replace(/\\\]/g, () => save('\\]'));
-    // --- 2) 模型有时把公式写成普通括号 (P=I^2R...\times...) ，补成 $...$ ---
+
+    // --- 3) 模型有时把公式写成普通括号 (P=I^2R...\times...) ，补成 $...$ ---
     pre = pre.replace(/\(([^()\n]{0,300}?\\[a-zA-Z][^()\n]{0,300}?)\)/g, (m, inner) => {
-      if (/[\u4e00-\u9fff]/.test(inner)) return m;   // 含中文就别乱改
-      if (/^\$|\$$/.test(inner)) return m;           // 已经带 $ 的别动
+      if (/[\u4e00-\u9fff]/.test(inner)) return m;
+      if (/^\$|\$$/.test(inner)) return m;
       return '$' + inner + '$';
     });
+
     let html;
     if (global.marked && global.marked.parse) {
       try { html = global.marked.parse(pre, { gfm: true, breaks: true }); }
@@ -59,9 +79,16 @@
     } else {
       html = '<pre>' + esc(pre) + '</pre>';
     }
-    // 还原被保护的定界符
+    // 还原剩余定界符
     html = html.replace(/\u0001(\d+)\u0002/g, (m, i) => saved[Number(i)] || '');
-    // 基础净化：去掉脚本与事件属性（内容来自模型，仍做一层防护）
+    // 还原公式块：用 data-tex 交给 KaTeX 直接渲染，不再依赖 auto-render
+    html = html.replace(/\u0003(\d+)\u0004/g, (m, i) => {
+      const b = mathBlocks[Number(i)];
+      if (!b) return '';
+      return '<span class="' + (b.display ? 'math-display' : 'math-inline') +
+        '" data-tex="' + encodeURIComponent(b.tex) + '"></span>';
+    });
+
     return html
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
@@ -70,7 +97,22 @@
   }
 
   function renderMath(el) {
-    if (!el || !global.renderMathInElement) return;
+    if (!el) return;
+    // 先渲染我们保护下来的公式块
+    if (global.katex && global.katex.render) {
+      el.querySelectorAll('[data-tex]').forEach(node => {
+        try {
+          const tex = decodeURIComponent(node.getAttribute('data-tex') || '');
+          global.katex.render(tex, node, {
+            displayMode: node.classList.contains('math-display'),
+            throwOnError: false,
+            strict: 'ignore'
+          });
+        } catch (e) { /* 单个公式失败不影响全文 */ }
+      });
+    }
+    // 再处理普通 $...$ / 其它剩余定界符
+    if (!global.renderMathInElement) return;
     try {
       global.renderMathInElement(el, {
         delimiters: [
