@@ -10,7 +10,8 @@
     apiKey: '',
     model: 'deepseek-chat',
     temperature: 0.4,
-    demo: false
+    demo: false,
+    maxTokens: 0
   };
 
   function lsGet(k, d) {
@@ -96,9 +97,13 @@
         stream: true
       };
       if (o.maxTokens) payload.max_tokens = o.maxTokens;
-      else if (/deepseek/i.test(cfg.baseUrl || '')) {
-        // V4.1-Flash 的思考模式需要更大的输出预算；8192 常被 reasoning 吃光。
-        payload.max_tokens = /deepseek.*flash/i.test(String(cfg.model || '')) ? 65536 : 8192;
+      else {
+        const customMax = parseInt(cfg.maxTokens, 10) || 0;
+        if (customMax > 0) payload.max_tokens = customMax;
+        else if (/deepseek/i.test(cfg.baseUrl || '')) {
+          // V4.1-Flash 的思考模式需要更大的输出预算；8192 常被 reasoning 吃光。
+          payload.max_tokens = /deepseek.*flash/i.test(String(cfg.model || '')) ? 65536 : 8192;
+        }
       }
       // 由每个 AI 功能自己的「深度思考」开关决定；未指定时默认开启（纯文字任务）。
       // 带图片的任务会在 generate/聊天调用处显式传 false，避免思考 token 吃光正文预算。

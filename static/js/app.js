@@ -2733,6 +2733,8 @@
     $('#cfgKey').value = c.apiKey || '';
     $('#cfgModel').value = c.model || '';
     $('#cfgTemp').value = c.temperature;
+    const mt = $('#cfgMaxTokens');
+    if (mt) mt.value = (c.maxTokens && Number(c.maxTokens) > 0) ? c.maxTokens : '';
     $('#cfgDemo').checked = !!c.demo;
     const cv = $('#cfgVision');
     if (cv) cv.checked = API.supportsVision();
@@ -2870,7 +2872,8 @@
       apiKey: $('#cfgKey').value.trim(),
       model: $('#cfgModel').value.trim() || 'deepseek-chat',
       temperature: parseFloat($('#cfgTemp').value) || 0.4,
-      demo: $('#cfgDemo').checked
+      demo: $('#cfgDemo').checked,
+      maxTokens: (parseInt(($('#cfgMaxTokens') || {}).value, 10) || 0)
     };
     const themeSel = $('#cfgTheme');
     if (themeSel) { S.ui.theme = themeSel.value || 'light'; saveUi(); applyTheme(); }
